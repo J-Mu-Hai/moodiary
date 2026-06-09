@@ -1,0 +1,115 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    name: Build APK
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Read Flutter Version
+        id: flutter_version
+        run: |
+          if [ -f .fvmrc ]; then
+            FLUTTER_VERSION=$(cat .fvmrc | jq -r '.flutter')
+            echo "Flutter version detected: $FLUTTER_VERSION"
+            echo "flutter-version=$FLUTTER_VERSION" >> $GITHUB_ENV
+          else
+            echo ".fvmrc not found. Defaulting to latest Flutter version."
+            echo "flutter-version=stable" >> $GITHUB_ENV
+          fi
+
+      - name: Set Up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.flutter-version }}
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.ANDROID_KJS }}" | base64 --decode > android/app/key.jks
+
+      - name: Create local.properties
+        run: |
+          echo "storePassword=${{ secrets.ANDROID_STORE_PASSWORD }}" > android/local.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> android/local.properties
+
+      - name: Build APK
+        run: flutter build apk --release --obfuscate --split-debug-info=splitMap
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  release:
+    runs-on: ubuntu-latest
+    name: Publish Release
+    needs: [ build-apk ]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download APK Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: android-apk
+          path: artifacts/android
+
+      - name: Get Latest Tag
+        id: latest_tag
+        uses: actions-ecosystem/action-get-latest-tag@v1.6.0
+        with:
+          fetch-all-tags: true
+          sort-tags: true
+
+      - name: Extract Tag Version
+        id: extract_tag_version
+        run: |
+          tag="${{ steps.latest_tag.outputs.tag }}"
+          version="${tag#v}"
+          echo "VERSION=$version" >> $GITHUB_ENV
+
+      - name: Rename Artifacts
+        run: |
+          mkdir -p renamed-artifacts
+          mv artifacts/android/app-release.apk renamed-artifacts/moodiary-${{ env.VERSION }}-android-arm64.apk
+
+      - name: Generate Release Notes
+        id: release_notes
+        uses: release-drafter/release-drafter@v5
+        with:
+          config-name: release-drafter.yml
+          tag: v${{ env.VERSION }}
+          publish: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: renamed-artifacts/*
+          tag: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
+          body: ${{ steps.release_notes.outputs.body }}
+          draft: true
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
