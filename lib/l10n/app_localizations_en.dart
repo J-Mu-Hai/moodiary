@@ -291,6 +291,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get colorNameBaiCaoShuang => 'BaiCaoShuang';
 
   @override
+  String get colorNameXueQing => 'XueQing';
+
+  @override
+  String get colorNameXiangSe => 'XiangSe';
+
+  @override
+  String get colorNameJiangSe => 'JiangSe';
+
+  @override
   String get colorNameShuiZhuHua => 'ShuiZhuHua';
 
   @override

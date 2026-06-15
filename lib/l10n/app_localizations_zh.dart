@@ -291,6 +291,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get colorNameBaiCaoShuang => '百草霜';
 
   @override
+  String get colorNameXueQing => '雪青';
+
+  @override
+  String get colorNameXiangSe => '湘色';
+
+  @override
+  String get colorNameJiangSe => '绛色';
+
+  @override
   String get colorNameShuiZhuHua => '水朱华';
 
   @override

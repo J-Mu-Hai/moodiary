@@ -659,6 +659,24 @@ abstract class AppLocalizations {
   /// **'百草霜'**
   String get colorNameBaiCaoShuang;
 
+  /// No description provided for @colorNameXueQing.
+  ///
+  /// In zh, this message translates to:
+  /// **'雪青'**
+  String get colorNameXueQing;
+
+  /// No description provided for @colorNameXiangSe.
+  ///
+  /// In zh, this message translates to:
+  /// **'湘色'**
+  String get colorNameXiangSe;
+
+  /// No description provided for @colorNameJiangSe.
+  ///
+  /// In zh, this message translates to:
+  /// **'绛色'**
+  String get colorNameJiangSe;
+
   /// No description provided for @colorNameShuiZhuHua.
   ///
   /// In zh, this message translates to:

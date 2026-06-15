@@ -24,6 +24,14 @@ class AppColor {
     const Color(0xFF4F794A),
     //缃叶
     const Color(0xFFECD452),
+    //雪青
+    const Color(0xFFB0A4E3),
+    //湘色
+    const Color(0xFFCD5C5C),
+    //绛色
+    const Color(0xFF9D2933),
+   
+    
   ];
 
   static List<Color> specialColorList = [
@@ -42,6 +50,9 @@ class AppColor {
       3 => l10n.colorNameShuiZhuHua,
       4 => l10n.colorNameJiHe,
       5 => l10n.colorNameXiangYe,
+      6 => l10n.colorNameXueQing,
+      7 => l10n.colorNameXiangSe,
+      8 => l10n.colorNameJiangSe,
       9990 => l10n.specialColorNameMochaMousse,
       _ => l10n.colorNameSystem
     };
