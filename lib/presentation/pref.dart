@@ -91,6 +91,9 @@ class PrefUtil {
     'language',
     // webdav加密
     'syncEncryption',
+    // AI providers
+    'aiProviders',
+    'aiCurrentProviderId',
   };
 
   static Future<void> initPref() async {

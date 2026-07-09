@@ -2,11 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:moodiary/api/api.dart';
-import 'package:moodiary/common/models/hunyuan.dart';
+import 'package:moodiary/common/models/ai_provider.dart';
 import 'package:moodiary/common/values/keyboard_state.dart';
+import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/utils/notice_util.dart';
-import 'package:moodiary/utils/signature_util.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'assistant_state.dart';
@@ -14,16 +13,16 @@ import 'assistant_state.dart';
 class AssistantLogic extends GetxController with WidgetsBindingObserver {
   final AssistantState state = AssistantState();
 
-  //输入框控制器
   late TextEditingController textEditingController = TextEditingController();
-
-  //控制器
   late ScrollController scrollController = ScrollController();
-
-  //聚焦对象
   late FocusNode focusNode = FocusNode();
 
   List<double> heightList = [];
+
+  /// 当前使用的 AI Provider
+  AIProvider? _currentProvider;
+
+  AIProvider? get currentProvider => _currentProvider;
 
   @override
   void didChangeMetrics() {
@@ -33,38 +32,27 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
         if (height > heightList.last &&
             state.keyboardState != KeyboardState.opening) {
           state.keyboardState = KeyboardState.opening;
-          //正在打开
         } else if (height < heightList.last &&
             state.keyboardState != KeyboardState.closing) {
           state.keyboardState = KeyboardState.closing;
-          //正在关闭
           unFocus();
         }
       }
-
-      // 只在高度变化时记录高度
       if (heightList.isEmpty || height != heightList.last) {
         heightList.add(height);
       }
-
-      // 当高度为0且键盘经历了开启关闭过程时，认为键盘已完全关闭
       if (height == 0 && state.keyboardState != KeyboardState.closed) {
         state.keyboardState = KeyboardState.closed;
         heightList.clear();
-        //已经关闭
       }
     });
     super.didChangeMetrics();
   }
 
   @override
-  void onInit() {
-    super.onInit();
-  }
-
-  @override
   void onReady() {
     WidgetsBinding.instance.addObserver(this);
+    _loadProvider();
     super.onReady();
   }
 
@@ -75,6 +63,53 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     scrollController.dispose();
     focusNode.dispose();
     super.onClose();
+  }
+
+  /// 从配置加载 AI Provider
+  void _loadProvider() {
+    final providersJson = PrefUtil.getValue<String>('aiProviders');
+    if (providersJson == null || providersJson.isEmpty) {
+      _currentProvider = null;
+      return;
+    }
+    final list = jsonDecode(providersJson) as List;
+    final configs = list.map((e) => AIProviderConfig.fromJson(e)).toList();
+    if (configs.isEmpty) {
+      _currentProvider = null;
+      return;
+    }
+
+    // 读取上次选中的 Provider
+    final currentId = PrefUtil.getValue<String>('aiCurrentProviderId') ?? '';
+    AIProviderConfig? selectedConfig;
+    if (configs.isNotEmpty) {
+      if (currentId.isNotEmpty) {
+        selectedConfig = configs.cast<AIProviderConfig?>().firstWhere(
+            (c) => c!.id == currentId,
+            orElse: () => null);
+      }
+      selectedConfig ??= configs.first;
+    }
+
+    if (selectedConfig == null) return;
+    _currentProvider = AIProviderFactory.create(selectedConfig);
+    state.currentProviderId.value = selectedConfig.id;
+    state.currentModel.value = selectedConfig.model;
+  }
+
+  /// 切换 AI Provider
+  Future<void> switchProvider(AIProviderConfig config) async {
+    _currentProvider = AIProviderFactory.create(config);
+    state.currentProviderId.value = config.id;
+    state.currentModel.value = config.model;
+    await PrefUtil.setValue<String>('aiCurrentProviderId', config.id);
+    newChat();
+  }
+
+  /// 切换模型
+  Future<void> switchModel(String model) async {
+    state.currentModel.value = model;
+    newChat();
   }
 
   void handleBack() {
@@ -93,7 +128,7 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
   }
 
   void newChat() {
-    state.messages = {};
+    state.messages.clear();
     update();
   }
 
@@ -101,38 +136,64 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     textEditingController.clear();
   }
 
-  //对话
+  /// 发送对话请求
   Future<void> getAi(String ask) async {
-    final check = SignatureUtil.checkTencent();
-    if (check != null) {
-      //清空输入框
-      clearText();
-      //失去焦点
-      unFocus();
-      //拿到用户提问后，对话上下文中增加一项用户提问
-      final askTime = DateTime.now();
-      state.messages[askTime] = Message('user', ask);
+    if (_currentProvider == null) {
+      NoticeUtil.showToast('请先在实验室配置 AI 服务商');
+      return;
+    }
+    if (!_currentProvider!.isConfigured) {
+      NoticeUtil.showToast('当前 AI 服务商配置不完整');
+      return;
+    }
+
+    clearText();
+    unFocus();
+
+    // 添加用户消息
+    state.messages.add(AIMessage(role: 'user', content: ask));
+    update();
+    toBottom();
+
+    try {
+      // 发起流式请求
+      final stream = await _currentProvider!.chat(
+        messages: state.messages
+            .map((m) => AIMessage(role: m.role, content: m.content))
+            .toList(),
+        modelOverride: state.currentModel.value,
+      );
+
+      // 添加空助手消息占位
+      final replyMsg = AIMessage(role: 'assistant', content: '');
+      state.messages.add(replyMsg);
       update();
-      toBottom();
-      //带着上下文请求
-      final stream = await Api.getHunYuan(check['id']!, check['key']!,
-          state.messages.values.toList(), state.modelVersion.value);
-      //如果收到了请求，添加一个回答上下文
-      final replyTime = DateTime.now();
-      state.messages[replyTime] = Message('assistant', '');
-      update();
-      //接收stream
-      stream?.listen((content) {
-        if (content != '' && content.contains('data')) {
-          final HunyuanResponse result =
-              HunyuanResponse.fromJson(jsonDecode(content.split('data: ')[1]));
-          state.messages[replyTime]!.content +=
-              result.choices!.first.delta!.content!;
-          HapticFeedback.vibrate();
-          update();
-          toBottom();
+
+      // 接收流
+      await for (final chunk in stream) {
+        if (chunk.isNotEmpty) {
+          final last = state.messages.last;
+          if (last.role == 'assistant') {
+            state.messages[state.messages.length - 1] =
+                AIMessage(role: 'assistant', content: last.content + chunk);
+            HapticFeedback.vibrate();
+            update();
+            toBottom();
+          }
         }
-      });
+      }
+    } catch (e) {
+      final providerName = _currentProvider?.displayName ?? '未知';
+      final url = state.currentProviderId.value;
+      NoticeUtil.showToast('[$providerName] 请求失败，请检查:\n1. API 地址是否正确\n2. API Key 是否有效\n3. 模型名是否支持');
+      print('[AI ERROR] Provider=$providerName URL=$url Error=$e');
+      // 移除空白的助手消息
+      if (state.messages.isNotEmpty &&
+          state.messages.last.role == 'assistant' &&
+          state.messages.last.content.isEmpty) {
+        state.messages.removeLast();
+        update();
+      }
     }
   }
 
@@ -140,21 +201,14 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     scrollController.jumpTo(scrollController.position.maxScrollExtent);
   }
 
-  String getText() {
-    return textEditingController.text;
-  }
+  String getText() => textEditingController.text;
 
   Future<void> checkGetAi() async {
     final text = getText();
-    if (text != '') {
+    if (text.isNotEmpty) {
       await getAi(text);
     } else {
       NoticeUtil.showToast('还没有输入问题');
     }
-  }
-
-  void changeModel(version) {
-    state.modelVersion.value = version;
-    state.messages = {};
   }
 }

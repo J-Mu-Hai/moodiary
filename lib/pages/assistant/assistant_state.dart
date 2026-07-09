@@ -1,24 +1,22 @@
-import 'package:moodiary/common/models/hunyuan.dart';
 import 'package:moodiary/common/values/keyboard_state.dart';
 import 'package:refreshed/refreshed.dart';
 
 class AssistantState {
-  //对话上下文
-  late Map<DateTime, Message> messages;
+  // 对话消息列表（AIMessage 定义在 ai_provider.dart 中）
+  late RxList messages; // List<AIMessage>
 
-  //模型版本
-  late RxInt modelVersion;
+  // 当前选中的 Provider ID
+  late RxString currentProviderId;
+
+  // 当前选中的模型名
+  late RxString currentModel;
 
   late KeyboardState keyboardState;
 
-  late int totalToken;
-
   AssistantState() {
-    messages = {};
-
-    modelVersion = 0.obs;
+    messages = <dynamic>[].obs;
+    currentProviderId = ''.obs;
+    currentModel = ''.obs;
     keyboardState = KeyboardState.closed;
-
-    ///Initialize variables
   }
 }

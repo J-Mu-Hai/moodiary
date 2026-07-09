@@ -6,6 +6,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 import 'package:isar/isar.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:moodiary/common/models/isar/category.dart';
+import 'package:moodiary/common/values/fixed_categories.dart';
 import 'package:moodiary/common/models/isar/diary.dart';
 import 'package:moodiary/common/models/isar/font.dart';
 import 'package:moodiary/common/models/isar/sync_record.dart';
@@ -551,5 +552,22 @@ class IsarUtil {
     return await _isar.writeAsync((isar) {
       return isar.fonts.delete(id);
     });
+  }
+
+  /// 确保固定分类存在（首次启动时创建）
+  static Future<void> ensureFixedCategories() async {
+    for (final name in FixedCategories.names) {
+      final existing = _isar.categorys
+          .where()
+          .categoryNameEqualTo(name)
+          .findFirst();
+      if (existing == null) {
+        await _isar.writeAsync((isar) {
+          isar.categorys.put(Category()
+            ..id = name  // 用名称作为 ID，方便识别
+            ..categoryName = name);
+        });
+      }
+    }
   }
 }

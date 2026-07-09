@@ -37,6 +37,7 @@ Future<void> _initSystem() async {
   await RustLib.init();
   await PrefUtil.initPref();
   await IsarUtil.initIsar();
+  await IsarUtil.ensureFixedCategories();
   await ThemeUtil().buildTheme();
   await WebDavUtil().initWebDav();
   VideoPlayerMediaKit.ensureInitialized(
