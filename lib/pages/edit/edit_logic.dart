@@ -48,6 +48,7 @@ class EditLogic extends GetxController {
   //聚焦对象
   late FocusNode contentFocusNode = FocusNode();
   late FocusNode titleFocusNode = FocusNode();
+  bool _shouldRestoreFocus = false; // 工具栏操作后恢复焦点
   Timer? _timer;
 
   late final KeyboardObserver keyboardObserver;
@@ -62,7 +63,6 @@ class EditLogic extends GetxController {
           case KeyboardState.opening:
             break;
           case KeyboardState.closing:
-            unFocus();
             break;
           case KeyboardState.closed:
             break;
@@ -80,15 +80,29 @@ class EditLogic extends GetxController {
     await _initEdit();
     quillController?.addListener(_listenCount);
     markdownTextEditingController?.addListener(_listenCount);
-    if (state.firstLineIndent) {
-      quillController?.document.changes.listen((change) {
-        final operations = change.change.operations;
-        final lastOperation = operations.last;
-        if (lastOperation.key == 'insert' && lastOperation.value == '\n') {
-          insertNewLine();
-        }
-      });
-    }
+    // 工具栏操作后确保编辑器保持焦点
+    contentFocusNode.addListener(() {
+      _shouldRestoreFocus = contentFocusNode.hasFocus;
+    });
+    quillController?.addListener(() {
+      if (_shouldRestoreFocus && !contentFocusNode.hasFocus) {
+        contentFocusNode.requestFocus();
+      }
+    });
+    // 监听文档变化
+    quillController?.document.changes.listen((change) {
+      final operations = change.change.operations;
+      final lastOperation = operations.last;
+      // 首行缩进
+      if (state.firstLineIndent &&
+          lastOperation.key == 'insert' && lastOperation.value == '\n') {
+        insertNewLine();
+      }
+      // # + 空格 → 标题快捷输入（检测光标前的内容）
+      if (lastOperation.key == 'insert' && lastOperation.value == ' ') {
+        _checkHeadingShortcut();
+      }
+    });
     super.onReady();
   }
 
@@ -627,6 +641,69 @@ class EditLogic extends GetxController {
   void removeTag(index) {
     state.currentDiary.tags.removeAt(index);
     update(['Tag']);
+  }
+
+  /// # + 空格 → 标题快捷输入
+  void _checkHeadingShortcut() {
+    if (quillController == null) return;
+    final index = quillController!.selection.baseOffset;
+    if (index < 2) return;
+    // 获取光标前的文本
+    final plain = quillController!.document.toPlainText();
+    if (index > plain.length) return;
+    final before = plain.substring(0, index);
+    // 查找当前行开头到光标的内容
+    final lineStart = before.lastIndexOf('\n');
+    final linePrefix = before.substring(lineStart == -1 ? 0 : lineStart + 1);
+    // 匹配 # ## ### #### + 空格 的行首模式
+    final match = RegExp(r'^(#{1,4}) $').firstMatch(linePrefix);
+    if (match == null) return;
+    final level = match.group(1)!.length;
+    final prefixLen = match.group(0)!.length;
+    // 删除 # 文本并设置标题（保留 # 号后的文字）
+    final textAfter = linePrefix.substring(prefixLen);
+    quillController!.formatText(
+      index - prefixLen,
+      prefixLen,
+      Attribute.fromKeyValue('header', level),
+    );
+  }
+
+  /// 获取文档标题结构（用于目录弹窗）
+  List<MapEntry<int, String>> getDocumentOutline() {
+    if (quillController == null) return [];
+    final result = <MapEntry<int, String>>[];
+    final delta = quillController!.document.toDelta();
+    int index = 0;
+    for (final op in delta.toJson()) {
+      final insert = op['insert'] as String?;
+      final attributes = op['attributes'] as Map<String, dynamic>?;
+      if (insert == '\n' && attributes != null) {
+        final header = attributes['header'];
+        if (header is int && header >= 1 && header <= 4) {
+          // 找到标题行的文本
+          final lines = quillController!.document.toPlainText().split('\n');
+          final lineIndex = result.length;
+          if (lineIndex < lines.length) {
+            result.add(MapEntry(header, lines[lineIndex]));
+          }
+        }
+      }
+      if (insert != null) {
+        index += insert.length;
+      }
+    }
+    return result;
+  }
+
+  /// 滚动到指定位置
+  void scrollToOutline(int index) {
+    // 简单实现：通过设置 selection 跳转
+    quillController?.updateSelection(
+      TextSelection.collapsed(offset: index),
+      ChangeSource.local,
+    );
+    contentFocusNode.requestFocus();
   }
 
   void selectCategory(String? id) {

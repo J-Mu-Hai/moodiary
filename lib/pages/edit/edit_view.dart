@@ -68,6 +68,32 @@ class EditPage extends StatelessWidget {
         ]));
   }
 
+  /// 显示文档目录（独立全屏页面）
+  void _showOutlineDialog(BuildContext context) {
+    final logic = Bind.find<EditLogic>();
+    final colorScheme = Theme.of(context).colorScheme;
+    final outline = logic.getDocumentOutline();
+
+    if (outline.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暂无标题，请使用 # + 空格创建')),
+      );
+      return;
+    }
+
+    // 悬浮目录面板（Overlay 实现）
+    OverlayEntry? entry;
+    entry = OverlayEntry(
+      builder: (_) => _OutlinePanel(
+        outline: outline,
+        colorScheme: colorScheme,
+        logic: logic,
+        onClose: () => entry?.remove(),
+      ),
+    );
+    Overlay.of(context).insert(entry);
+  }
+
   @override
   Widget build(BuildContext context) {
     final logic = Bind.find<EditLogic>();
@@ -837,6 +863,13 @@ class EditPage extends StatelessWidget {
                     onPressed: logic.insertNewLine,
                   );
                 },
+                (context, embedContext) {
+                  return _buildToolBarButton(
+                    iconData: Icons.list_alt_rounded,
+                    tooltip: '目录',
+                    onPressed: () => _showOutlineDialog(context),
+                  );
+                },
               ],
             ),
           ),
@@ -1129,6 +1162,184 @@ class EditPage extends StatelessWidget {
                     : const SizedBox.shrink();
               }),
         ],
+      ),
+    );
+  }
+}
+
+/// 悬浮目录面板（Overlay）
+class _OutlinePanel extends StatefulWidget {
+  final List<MapEntry<int, String>> outline;
+  final ColorScheme colorScheme;
+  final EditLogic logic;
+  final VoidCallback onClose;
+
+  const _OutlinePanel({
+    required this.outline,
+    required this.colorScheme,
+    required this.logic,
+    required this.onClose,
+  });
+
+  @override
+  State<_OutlinePanel> createState() => _OutlinePanelState();
+}
+
+class _OutlinePanelState extends State<_OutlinePanel> {
+  bool _expanded = true;
+  Offset _position = const Offset(30, 150);
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        // 点击背景关闭
+        GestureDetector(
+          onTap: widget.onClose,
+          child: Container(color: Colors.transparent),
+        ),
+        // 悬浮面板
+        Positioned(
+          left: _position.dx,
+          top: _position.dy,
+          child: GestureDetector(
+            onTap: () {}, // 阻止背景关闭
+            child: Stack(
+              children: [
+                if (_expanded)
+                  _buildPanel()
+                else
+                  _buildMiniButton(),
+                // 拖拽感应区
+                Positioned.fill(
+                  child: GestureDetector(
+                    onPanUpdate: (d) {
+                      setState(() {
+                        _position += d.delta;
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMiniButton() {
+    return Material(
+      elevation: 6,
+      borderRadius: BorderRadius.circular(24),
+      color: widget.colorScheme.primaryContainer,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: () => setState(() => _expanded = true),
+        child: const Padding(
+          padding: EdgeInsets.all(12),
+          child: Icon(Icons.list_alt_rounded, size: 22),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPanel() {
+    return Material(
+      elevation: 10,
+      borderRadius: BorderRadius.circular(12),
+      color: widget.colorScheme.surfaceContainerHigh,
+      child: Container(
+        width: 200,
+        constraints: const BoxConstraints(maxHeight: 340),
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.list_alt_rounded,
+                    size: 16, color: widget.colorScheme.primary),
+                const SizedBox(width: 6),
+                Text('目录',
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600,
+                        color: widget.colorScheme.onSurface)),
+                const Spacer(),
+                SizedBox(
+                  width: 24, height: 24,
+                  child: IconButton(
+                    onPressed: () => setState(() => _expanded = false),
+                    icon: Icon(Icons.minimize_rounded, size: 14),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+                SizedBox(
+                  width: 24, height: 24,
+                  child: IconButton(
+                    onPressed: widget.onClose,
+                    icon: Icon(Icons.close, size: 14),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 8),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: widget.outline.length,
+                itemBuilder: (ctx, i) {
+                  final level = widget.outline[i].key;
+                  final title = widget.outline[i].value;
+                  return InkWell(
+                    onTap: () {
+                      widget.logic.scrollToOutline(i);
+                    },
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: EdgeInsets.only(
+                        left: (level - 1) * 12.0,
+                        top: 5, bottom: 5, right: 4,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 3, height: 14,
+                            decoration: BoxDecoration(
+                              color: level == 1
+                                  ? widget.colorScheme.primary
+                                  : widget.colorScheme.primary
+                                      .withValues(alpha: 0.4),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              title.isNotEmpty ? title : '(空)',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: level == 1 ? 13 : 12,
+                                fontWeight: level == 1
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                                color: widget.colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
