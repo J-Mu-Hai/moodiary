@@ -1,10 +1,14 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:moodiary/common/models/ai_provider.dart';
 import 'package:moodiary/common/values/keyboard_state.dart';
+import 'package:moodiary/pages/home/diary/diary_logic.dart';
+import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/presentation/pref.dart';
+import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/notice_util.dart';
 import 'package:refreshed/refreshed.dart';
 
@@ -112,6 +116,39 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     newChat();
   }
 
+  /// 构建最近的日记摘要（用于 AI 上下文）
+  Future<String?> _buildDiaryContext() async {
+    try {
+      // 获取最近 7 天的日记
+      final now = DateTime.now();
+      final recent = await IsarUtil.getDiariesByDateRange(
+        now.subtract(const Duration(days: 7)),
+        now,
+      );
+      if (recent.isEmpty) return null;
+
+      final buf = StringBuffer('以下是用户最近的日记摘要，请据此回答：\n');
+      for (final d in recent) {
+        final date = '${d.time.month}/${d.time.day}';
+        final mood = d.mood != null ? ' 心情${(d.mood! * 10).round()}/10' : '';
+        final weather = d.weather.isNotEmpty ? ' ${d.weather.first}' : '';
+        final title = d.title.isNotEmpty ? ' 《${d.title}》' : '';
+        final snippet = d.contentText.length > 80
+            ? d.contentText.substring(0, 80)
+            : d.contentText;
+        buf.writeln('[$date$weather$mood]$title');
+        if (snippet.isNotEmpty) {
+          buf.writeln('  > $snippet');
+        }
+      }
+      buf.writeln('\n回答时结合这些日记内容给出有针对性的回应。');
+      return buf.toString();
+    } catch (e) {
+      print('[AI Diary Error] $e');
+      return null;
+    }
+  }
+
   void handleBack() {
     if (focusNode.hasFocus) {
       unFocus();
@@ -150,17 +187,32 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     clearText();
     unFocus();
 
-    // 添加用户消息
-    state.messages.add(AIMessage(role: 'user', content: ask));
-    update();
-    toBottom();
-
     try {
+      // 先把用户消息加入界面显示
+      state.messages.add(AIMessage(role: 'user', content: ask));
+      update();
+      toBottom();
+
+      // 构建发送给 AI 的消息列表（包含刚添加的用户消息）
+      List<AIMessage> chatMessages = state.messages
+          .map((m) => AIMessage(role: m.role, content: m.content))
+          .toList();
+
+      // 如果开启了日记读取，注入最近日记摘要
+      if (state.diaryAccessEnabled.value) {
+        try {
+          final diaryContext = await _buildDiaryContext();
+          if (diaryContext != null) {
+            chatMessages.insert(0, AIMessage(role: 'system', content: diaryContext));
+          }
+        } catch (e) {
+          print('[AI Diary Context Error] $e');
+        }
+      }
+
       // 发起流式请求
       final stream = await _currentProvider!.chat(
-        messages: state.messages
-            .map((m) => AIMessage(role: m.role, content: m.content))
-            .toList(),
+        messages: chatMessages,
         modelOverride: state.currentModel.value,
       );
 
@@ -182,12 +234,19 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
           }
         }
       }
-    } catch (e) {
+    } catch (e, stack) {
       final providerName = _currentProvider?.displayName ?? '未知';
-      final url = state.currentProviderId.value;
-      NoticeUtil.showToast('[$providerName] 请求失败，请检查:\n1. API 地址是否正确\n2. API Key 是否有效\n3. 模型名是否支持');
-      print('[AI ERROR] Provider=$providerName URL=$url Error=$e');
-      // 移除空白的助手消息
+      // 写入日志文件
+      try {
+        final log = File(FileUtil.getErrorLogFilePath());
+        await log.writeAsString(
+          '[AI ERROR] $providerName | ${DateTime.now()}\n$e\n$stack\n---\n',
+          mode: FileMode.append,
+        );
+      } catch (_) {}
+      print('[AI ERROR] Provider=$providerName Error=$e\n$stack');
+      NoticeUtil.showToast('请求失败，请检查 API 配置');
+      // 如果用户消息已经添加（首次失败时还没添加）
       if (state.messages.isNotEmpty &&
           state.messages.last.role == 'assistant' &&
           state.messages.last.content.isEmpty) {
@@ -198,7 +257,9 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
   }
 
   void toBottom() {
-    scrollController.jumpTo(scrollController.position.maxScrollExtent);
+    if (scrollController.hasClients) {
+      scrollController.jumpTo(scrollController.position.maxScrollExtent);
+    }
   }
 
   String getText() => textEditingController.text;

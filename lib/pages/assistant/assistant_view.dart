@@ -198,6 +198,18 @@ class AssistantPage extends StatelessWidget {
           }),
         ),
         actions: [
+          Obx(() => IconButton(
+            onPressed: () => state.diaryAccessEnabled.value = !state.diaryAccessEnabled.value,
+            icon: Icon(
+              state.diaryAccessEnabled.value
+                  ? Icons.menu_book_rounded
+                  : Icons.menu_book_outlined,
+            ),
+            color: state.diaryAccessEnabled.value
+                ? colorScheme.primary
+                : null,
+            tooltip: state.diaryAccessEnabled.value ? '日记感知: 开' : '日记感知: 关',
+          )),
           IconButton(
             onPressed: logic.newChat,
             icon: const Icon(Icons.refresh_rounded),
