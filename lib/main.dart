@@ -18,6 +18,7 @@ import 'package:moodiary/config/env.dart';
 import 'package:moodiary/l10n/app_localizations.dart';
 import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/router/app_pages.dart';
+import 'package:moodiary/services/ai_trigger_service.dart';
 import 'package:moodiary/router/app_routes.dart';
 import 'package:moodiary/src/rust/frb_generated.dart';
 import 'package:moodiary/utils/log_util.dart';
@@ -55,6 +56,8 @@ Future<void> _initSystem() async {
   );
   await _findLanguage();
   await _platFormOption();
+  // 启动 AI 触发器服务
+  AiTriggerService().init();
 }
 
 Future<void> _findLanguage() async {

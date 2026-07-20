@@ -1,0 +1,43 @@
+[
+  {
+    "name": "getDiaryByDateRange",
+    "description": "获取指定日期范围内的所有日记",
+    "params": [
+      {"name": "startDate", "type": "string", "format": "YYYY-MM-DD", "required": true, "description": "开始日期"},
+      {"name": "endDate", "type": "string", "format": "YYYY-MM-DD", "required": true, "description": "结束日期"}
+    ],
+    "result": "[{id, date, title, mood, weather, categoryName, tags, snippet}]  snippet 是前 100 字摘要"
+  },
+  {
+    "name": "getDiaryByCategory",
+    "description": "获取指定分类在指定日期范围内的日记",
+    "params": [
+      {"name": "categoryName", "type": "string", "required": true, "description": "分类名称"},
+      {"name": "startDate", "type": "string", "format": "YYYY-MM-DD", "required": false, "description": "开始日期"},
+      {"name": "endDate", "type": "string", "format": "YYYY-MM-DD", "required": false, "description": "结束日期"}
+    ],
+    "result": "[{id, date, title, mood, weather, tags, snippet}]"
+  },
+  {
+    "name": "getTodayPlan",
+    "description": "获取今日计划（每日计划分类下的日记）",
+    "params": [
+      {"name": "date", "type": "string", "format": "YYYY-MM-DD", "required": false, "description": "指定日期"}
+    ],
+    "result": "[{id, title, completed: bool, note}]"
+  },
+  {
+    "name": "getTaskAnalysis",
+    "description": "获取任务管理分类的分析数据",
+    "params": [
+      {"name": "date", "type": "string", "format": "YYYY-MM-DD", "required": false, "description": "指定日期"}
+    ],
+    "result": "{totalTasks, completedTasks, pendingTasks, overdueTasks, details: [{title, completed, estimatedTime, actualTime}]}"
+  },
+  {
+    "name": "getCategories",
+    "description": "获取所有分类列表",
+    "params": [],
+    "result": "[{name, diaryCount, lastUsed}]"
+  }
+]

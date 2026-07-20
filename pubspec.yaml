@@ -173,6 +173,8 @@ flutter:
     - assets/icon/dark/
     - assets/icon/light/
     - assets/lottie/
+    - assets/ai/
+    - assets/ai/prompts/
     - res/sponsor/
 
   uses-material-design: true

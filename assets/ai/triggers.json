@@ -1,0 +1,42 @@
+[
+  {
+    "id": "daily_review",
+    "name": "每日复盘",
+    "description": "每晚检查今日计划和执行情况，提醒复盘",
+    "schedule": {"type": "time", "hour": 22, "minute": 0},
+    "cooldownHours": 23,
+    "priority": "normal",
+    "requiredData": ["getTodayPlan", "getDiaryByDateRange"],
+    "promptFile": "daily_review.txt"
+  },
+  {
+    "id": "weekly_review",
+    "name": "周报",
+    "description": "每周日总结本周情况",
+    "schedule": {"type": "time", "weekday": 7, "hour": 21, "minute": 0},
+    "cooldownHours": 160,
+    "priority": "normal",
+    "requiredData": ["getDiaryByDateRange", "getTaskAnalysis", "getDiaryByCategory"],
+    "promptFile": "weekly_review.txt"
+  },
+  {
+    "id": "idle_care",
+    "name": "闲置关怀",
+    "description": "用户打开应用长时间无操作时主动问候",
+    "schedule": {"type": "event", "event": "user_idle", "idleMinutes": 2},
+    "cooldownHours": 4,
+    "priority": "gentle",
+    "requiredData": [],
+    "promptFile": "idle_chat.txt"
+  },
+  {
+    "id": "task_analysis",
+    "name": "任务分析",
+    "description": "任务管理有新增时分析合理性",
+    "schedule": {"type": "event", "event": "task_created"},
+    "cooldownHours": 6,
+    "priority": "normal",
+    "requiredData": ["getTaskAnalysis"],
+    "promptFile": "task_analyze.txt"
+  }
+]

@@ -8,6 +8,7 @@ import 'package:moodiary/common/values/keyboard_state.dart';
 import 'package:moodiary/pages/home/diary/diary_logic.dart';
 import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/presentation/pref.dart';
+import 'package:moodiary/services/ai_prompt_manager.dart';
 import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/notice_util.dart';
 import 'package:refreshed/refreshed.dart';
@@ -20,6 +21,9 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
   late TextEditingController textEditingController = TextEditingController();
   late ScrollController scrollController = ScrollController();
   late FocusNode focusNode = FocusNode();
+
+  String? _systemPrompt; // AI 性格提示词（缓存）
+  bool _systemInjected = false;
 
   List<double> heightList = [];
 
@@ -166,6 +170,7 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
 
   void newChat() {
     state.messages.clear();
+    _systemInjected = false;
     update();
   }
 
@@ -193,10 +198,19 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
       update();
       toBottom();
 
-      // 构建发送给 AI 的消息列表（包含刚添加的用户消息）
+      // 构建发送给 AI 的消息列表
       List<AIMessage> chatMessages = state.messages
           .map((m) => AIMessage(role: m.role, content: m.content))
           .toList();
+
+      // 注入 AI 性格系统提示词（每个对话只注入一次）
+      if (!_systemInjected) {
+        _systemPrompt ??= await AiPromptManager().buildSystemPrompt();
+        if (_systemPrompt != null && _systemPrompt!.isNotEmpty) {
+          chatMessages.insert(0, AIMessage(role: 'system', content: _systemPrompt!));
+          _systemInjected = true;
+        }
+      }
 
       // 如果开启了日记读取，注入最近日记摘要
       if (state.diaryAccessEnabled.value) {
