@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:markdown_widget/markdown_widget.dart';
@@ -32,22 +33,38 @@ class AssistantPage extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-                child: TextField(
-              focusNode: logic.focusNode,
-              controller: logic.textEditingController,
-              minLines: 1,
-              maxLines: 4,
-              maxLength: null,
-              decoration: InputDecoration(
-                hintText: '输入问题...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(22.0),
-                  borderSide: BorderSide.none,
+                child: Focus(
+              onKeyEvent: (node, event) {
+                // Enter 发送，Shift+Enter 换行
+                if (event is KeyDownEvent) {
+                  final isEnter =
+                      event.logicalKey == LogicalKeyboardKey.enter;
+                  if (isEnter && !HardwareKeyboard.instance.isShiftPressed) {
+                    logic.checkGetAi();
+                    return KeyEventResult.handled;
+                  }
+                }
+                return KeyEventResult.ignored;
+              },
+              child: TextField(
+                focusNode: logic.focusNode,
+                controller: logic.textEditingController,
+                minLines: 1,
+                maxLines: 4,
+                maxLength: null,
+                decoration: InputDecoration(
+                  hintText: '输入问题... (Enter 发送 / Shift+Enter 换行)',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(22.0),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: colorScheme.surfaceContainerHighest,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                 ),
-                filled: true,
-                fillColor: colorScheme.surfaceContainerHighest,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               ),
             )),
             const SizedBox(width: 8),

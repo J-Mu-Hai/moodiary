@@ -865,4 +865,54 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get homeNavigatorLedger => 'Ledger';
+
+  @override
+  String get ledgerBudgetOverview => 'Budget Overview';
+
+  @override
+  String get ledgerMonthlyBudget => 'Monthly Budget';
+
+  @override
+  String get ledgerRemaining => 'Remaining';
+
+  @override
+  String get ledgerNotSet => 'Not Set';
+
+  @override
+  String ledgerUsed(Object amount) {
+    return 'Used ¥$amount';
+  }
+
+  @override
+  String get ledgerSetBudget => 'Set Monthly Budget';
+
+  @override
+  String get ledgerSetBudgetHint => 'Enter monthly budget amount (CNY)';
+
+  @override
+  String get ledgerAmount => 'Amount';
+
+  @override
+  String get ledgerAmountHint => '0.00';
+
+  @override
+  String get ledgerCategory => 'Category';
+
+  @override
+  String get ledgerNote => 'Note';
+
+  @override
+  String get ledgerNoteHint => 'Optional';
+
+  @override
+  String get ledgerAddExpense => 'Add Expense';
+
+  @override
+  String get ledgerNoExpense => 'No expenses yet';
+
+  @override
+  String get ledgerOverBudget => 'Over Budget';
 }

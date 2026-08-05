@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:moodiary/common/models/isar/category.dart';
 import 'package:moodiary/common/values/fixed_categories.dart';
 import 'package:moodiary/common/models/isar/diary.dart';
+import 'package:moodiary/common/models/isar/expense_record.dart';
 import 'package:moodiary/common/models/isar/font.dart';
 import 'package:moodiary/common/models/isar/sync_record.dart';
 import 'package:moodiary/common/models/map.dart';
@@ -28,6 +29,7 @@ class IsarUtil {
     DiarySchema,
     CategorySchema,
     FontSchema,
+    ExpenseRecordSchema,
   ];
 
   static Future<void> initIsar() async {
@@ -569,5 +571,61 @@ class IsarUtil {
         });
       }
     }
+  }
+
+  // ========== 账本相关 ==========
+
+  /// 插入一条支出记录
+  static Future<void> insertExpenseRecord(ExpenseRecord record) async {
+    await _isar.writeAsync((isar) {
+      isar.expenseRecords.put(record);
+    });
+  }
+
+  /// 删除一条支出记录（软删除）
+  static Future<void> deleteExpenseRecord(int isarId) async {
+    await _isar.writeAsync((isar) {
+      isar.expenseRecords.delete(isarId);
+    });
+  }
+
+  /// 获取指定月份的支出记录
+  static Future<List<ExpenseRecord>> getExpensesByMonth(
+      int year, int month) async {
+    return await _isar.expenseRecords
+        .where()
+        .showEqualTo(true)
+        .yMEqualTo('${year.toString()}/${month.toString()}')
+        .sortByTimeDesc()
+        .findAllAsync();
+  }
+
+  /// 获取指定月份的总支出（单位：分）
+  static Future<int> getTotalExpenseByMonth(int year, int month) async {
+    final records = await getExpensesByMonth(year, month);
+    return records.fold<int>(0, (sum, record) => sum + record.amount);
+  }
+
+  /// 获取指定日期的支出记录
+  static Future<List<ExpenseRecord>> getExpensesByDay(DateTime time) async {
+    return await _isar.expenseRecords
+        .where()
+        .showEqualTo(true)
+        .yMdEqualTo(
+            '${time.year.toString()}/${time.month.toString()}/${time.day.toString()}')
+        .sortByTimeDesc()
+        .findAllAsync();
+  }
+
+  /// 按分类统计指定月份的支出
+  static Future<Map<String, int>> getExpenseSummaryByCategory(
+      int year, int month) async {
+    final records = await getExpensesByMonth(year, month);
+    final Map<String, int> summary = {};
+    for (final record in records) {
+      summary[record.category] =
+          (summary[record.category] ?? 0) + record.amount;
+    }
+    return summary;
   }
 }

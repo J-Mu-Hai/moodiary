@@ -847,4 +847,54 @@ class AppLocalizationsZh extends AppLocalizations {
   String mediaVideoCount(num count) {
     return '$count 段视频';
   }
+
+  @override
+  String get homeNavigatorLedger => '账本';
+
+  @override
+  String get ledgerBudgetOverview => '预算概览';
+
+  @override
+  String get ledgerMonthlyBudget => '月预算';
+
+  @override
+  String get ledgerRemaining => '剩余';
+
+  @override
+  String get ledgerNotSet => '未设置';
+
+  @override
+  String ledgerUsed(Object amount) {
+    return '已使用 ¥$amount';
+  }
+
+  @override
+  String get ledgerSetBudget => '设置月预算';
+
+  @override
+  String get ledgerSetBudgetHint => '输入每月预算金额（元）';
+
+  @override
+  String get ledgerAmount => '金额';
+
+  @override
+  String get ledgerAmountHint => '0.00';
+
+  @override
+  String get ledgerCategory => '消费分类';
+
+  @override
+  String get ledgerNote => '备注';
+
+  @override
+  String get ledgerNoteHint => '可选';
+
+  @override
+  String get ledgerAddExpense => '记一笔';
+
+  @override
+  String get ledgerNoExpense => '暂无支出记录';
+
+  @override
+  String get ledgerOverBudget => '超支';
 }

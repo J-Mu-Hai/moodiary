@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class PrefUtil {
   static late final SharedPreferencesWithCache _prefs;
 
-  static const allowList = {
+  static final Set<String> allowList = {
     //应用版本
     'appVersion',
     //首次启动标识
@@ -94,12 +94,21 @@ class PrefUtil {
     // AI providers
     'aiProviders',
     'aiCurrentProviderId',
+    // Expense
+    'customExpenseCategories',
+    'monthlyBudget',
+    // 账本月预算（单位：分）
+    'monthlyBudget',
+    // 账本自定义分类（JSON 字符串列表）
+    'customExpenseCategories',
+    // 隐藏导航栏图标（桌面端）
+    'hideNavigatorIcons',
   };
 
   static Future<void> initPref() async {
     _prefs = await SharedPreferencesWithCache.create(
-      cacheOptions: const SharedPreferencesWithCacheOptions(
-        allowList: allowList,
+      cacheOptions: SharedPreferencesWithCacheOptions(
+        allowList: allowList.toSet(),
       ),
     );
     // 首次启动
@@ -210,6 +219,18 @@ class PrefUtil {
     await _prefs.setBool(
       'syncEncryption',
       _prefs.getBool('syncEncryption') ?? false,
+    );
+    await _prefs.setInt(
+      'monthlyBudget',
+      _prefs.getInt('monthlyBudget') ?? 0,
+    );
+    await _prefs.setStringList(
+      'customExpenseCategories',
+      _prefs.getStringList('customExpenseCategories') ?? [],
+    );
+    await _prefs.setBool(
+      'hideNavigatorIcons',
+      _prefs.getBool('hideNavigatorIcons') ?? false,
     );
   }
 

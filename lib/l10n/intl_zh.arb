@@ -275,5 +275,21 @@
   "diaryType": "类型",
   "mediaImageCount": "{count} 张照片",
   "mediaAudioCount": "{count} 段音频",
-  "mediaVideoCount": "{count} 段视频"
+  "mediaVideoCount": "{count} 段视频",
+  "homeNavigatorLedger": "账本",
+  "ledgerBudgetOverview": "预算概览",
+  "ledgerMonthlyBudget": "月预算",
+  "ledgerRemaining": "剩余",
+  "ledgerNotSet": "未设置",
+  "ledgerUsed": "已使用 ¥{amount}",
+  "ledgerSetBudget": "设置月预算",
+  "ledgerSetBudgetHint": "输入每月预算金额（元）",
+  "ledgerAmount": "金额",
+  "ledgerAmountHint": "0.00",
+  "ledgerCategory": "消费分类",
+  "ledgerNote": "备注",
+  "ledgerNoteHint": "可选",
+  "ledgerAddExpense": "记一笔",
+  "ledgerNoExpense": "暂无支出记录",
+  "ledgerOverBudget": "超支"
 }

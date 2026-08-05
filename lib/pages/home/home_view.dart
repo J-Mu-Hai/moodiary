@@ -9,6 +9,7 @@ import 'package:moodiary/components/home_nativatorbar/navigatorbar.dart';
 import 'package:moodiary/main.dart';
 import 'package:moodiary/pages/home/calendar/calendar_view.dart';
 import 'package:moodiary/pages/home/diary/diary_view.dart';
+import 'package:moodiary/pages/home/ledger/ledger_view.dart';
 import 'package:moodiary/pages/home/media/media_view.dart';
 import 'package:moodiary/pages/home/setting/setting_view.dart';
 import 'package:refreshed/refreshed.dart';
@@ -57,6 +58,11 @@ class HomePage extends StatelessWidget {
                               icon: const Icon(UniconsLine.image_v),
                               label: l10n.homeNavigatorMedia,
                               selectedIcon: const Icon(UniconsSolid.image_v),
+                            ),
+                            NavigationDestination(
+                              icon: const Icon(Icons.account_balance_wallet_outlined),
+                              label: l10n.homeNavigatorLedger,
+                              selectedIcon: const Icon(Icons.account_balance_wallet),
                             ),
                             NavigationDestination(
                               icon: const Icon(UniconsLine.layer_group),
@@ -112,6 +118,7 @@ class HomePage extends StatelessWidget {
                         DiaryPage(),
                         CalendarPage(),
                         MediaPage(),
+                        LedgerPage(),
                         SettingPage(),
                       ],
                     ));

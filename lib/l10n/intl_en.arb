@@ -275,5 +275,21 @@
   "diaryType": "Type",
   "mediaImageCount": "{count, plural, =1 {# Photo} other {# Photos}}",
   "mediaAudioCount": "{count, plural, =1 {# Audio} other {# Audios}}",
-  "mediaVideoCount": "{count, plural, =1 {# Video} other {# Videos}}"
+  "mediaVideoCount": "{count, plural, =1 {# Video} other {# Videos}}",
+  "homeNavigatorLedger": "Ledger",
+  "ledgerBudgetOverview": "Budget Overview",
+  "ledgerMonthlyBudget": "Monthly Budget",
+  "ledgerRemaining": "Remaining",
+  "ledgerNotSet": "Not Set",
+  "ledgerUsed": "Used \u00A5{amount}",
+  "ledgerSetBudget": "Set Monthly Budget",
+  "ledgerSetBudgetHint": "Enter monthly budget amount (CNY)",
+  "ledgerAmount": "Amount",
+  "ledgerAmountHint": "0.00",
+  "ledgerCategory": "Category",
+  "ledgerNote": "Note",
+  "ledgerNoteHint": "Optional",
+  "ledgerAddExpense": "Add Expense",
+  "ledgerNoExpense": "No expenses yet",
+  "ledgerOverBudget": "Over Budget"
 }

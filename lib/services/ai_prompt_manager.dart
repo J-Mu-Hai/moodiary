@@ -38,6 +38,15 @@ class AiPromptManager {
     return await loadPrompt('system_base.txt');
   }
 
+  /// 加载私有知识库（认知档案）
+  Future<String> loadKnowledgeBase() async {
+    try {
+      return await rootBundle.loadString('assets/ai/knowledge.md');
+    } catch (e) {
+      return '';
+    }
+  }
+
   /// 加载触发器对应的提示词，并填充数据
   Future<String> buildTriggerPrompt(
       String triggerId, Map<String, String> data) async {
@@ -66,10 +75,18 @@ class AiPromptManager {
     final base = await loadBaseSystemPrompt();
     final personality = await loadJson('personality.json');
     final functions = await loadJson('functions.json');
+    final knowledge = await loadKnowledgeBase();
 
     final buf = StringBuffer();
     buf.writeln(base);
     buf.writeln('\n---');
+
+    // 私有知识库（认知档案）
+    if (knowledge.isNotEmpty) {
+      buf.writeln('\n【私有知识库 · 用户认知档案】');
+      buf.writeln('分析任何事件前，优先阅读并调用以下关于用户的长期认知：');
+      buf.writeln(knowledge);
+    }
 
     // 性格设定
     if (personality is Map && personality.containsKey('speech_rules')) {

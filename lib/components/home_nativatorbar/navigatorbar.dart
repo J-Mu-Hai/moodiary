@@ -70,6 +70,13 @@ class HomeNavigatorBar extends StatelessWidget {
                         selectedIcon: const Icon(UniconsSolid.image_v),
                       ),
                       NavigationDestination(
+                        icon: const Icon(
+                            Icons.account_balance_wallet_outlined),
+                        label: l10n.homeNavigatorLedger,
+                        selectedIcon:
+                            const Icon(Icons.account_balance_wallet),
+                      ),
+                      NavigationDestination(
                         icon: const Icon(UniconsLine.layer_group),
                         label: l10n.homeNavigatorSetting,
                         selectedIcon: const Icon(UniconsSolid.layer_group),

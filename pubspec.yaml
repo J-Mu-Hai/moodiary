@@ -175,6 +175,7 @@ flutter:
     - assets/lottie/
     - assets/ai/
     - assets/ai/prompts/
+    - assets/ai/knowledge.md
     - res/sponsor/
 
   uses-material-design: true

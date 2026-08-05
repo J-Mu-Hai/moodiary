@@ -1750,6 +1750,102 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'{count} 段视频'**
   String mediaVideoCount(num count);
+
+  /// No description provided for @homeNavigatorLedger.
+  ///
+  /// In zh, this message translates to:
+  /// **'账本'**
+  String get homeNavigatorLedger;
+
+  /// No description provided for @ledgerBudgetOverview.
+  ///
+  /// In zh, this message translates to:
+  /// **'预算概览'**
+  String get ledgerBudgetOverview;
+
+  /// No description provided for @ledgerMonthlyBudget.
+  ///
+  /// In zh, this message translates to:
+  /// **'月预算'**
+  String get ledgerMonthlyBudget;
+
+  /// No description provided for @ledgerRemaining.
+  ///
+  /// In zh, this message translates to:
+  /// **'剩余'**
+  String get ledgerRemaining;
+
+  /// No description provided for @ledgerNotSet.
+  ///
+  /// In zh, this message translates to:
+  /// **'未设置'**
+  String get ledgerNotSet;
+
+  /// No description provided for @ledgerUsed.
+  ///
+  /// In zh, this message translates to:
+  /// **'已使用 ¥{amount}'**
+  String ledgerUsed(Object amount);
+
+  /// No description provided for @ledgerSetBudget.
+  ///
+  /// In zh, this message translates to:
+  /// **'设置月预算'**
+  String get ledgerSetBudget;
+
+  /// No description provided for @ledgerSetBudgetHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入每月预算金额（元）'**
+  String get ledgerSetBudgetHint;
+
+  /// No description provided for @ledgerAmount.
+  ///
+  /// In zh, this message translates to:
+  /// **'金额'**
+  String get ledgerAmount;
+
+  /// No description provided for @ledgerAmountHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'0.00'**
+  String get ledgerAmountHint;
+
+  /// No description provided for @ledgerCategory.
+  ///
+  /// In zh, this message translates to:
+  /// **'消费分类'**
+  String get ledgerCategory;
+
+  /// No description provided for @ledgerNote.
+  ///
+  /// In zh, this message translates to:
+  /// **'备注'**
+  String get ledgerNote;
+
+  /// No description provided for @ledgerNoteHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'可选'**
+  String get ledgerNoteHint;
+
+  /// No description provided for @ledgerAddExpense.
+  ///
+  /// In zh, this message translates to:
+  /// **'记一笔'**
+  String get ledgerAddExpense;
+
+  /// No description provided for @ledgerNoExpense.
+  ///
+  /// In zh, this message translates to:
+  /// **'暂无支出记录'**
+  String get ledgerNoExpense;
+
+  /// No description provided for @ledgerOverBudget.
+  ///
+  /// In zh, this message translates to:
+  /// **'超支'**
+  String get ledgerOverBudget;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
