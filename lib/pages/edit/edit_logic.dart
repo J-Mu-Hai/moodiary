@@ -472,7 +472,9 @@ class EditLogic extends GetxController {
     final DateTime currentTime = DateTime.now();
     if (oldTime != null &&
         currentTime.difference(oldTime!) < const Duration(seconds: 3)) {
-      Get.back();
+      // 第二次返回：自动保存后退出（与右上角对号一致，saveDiary 内部会 Get.back）
+      unFocus();
+      saveDiary();
     } else {
       oldTime = currentTime;
       NoticeUtil.showToast(l10n.backAgainToExit);
