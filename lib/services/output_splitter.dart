@@ -1,3 +1,6 @@
+/// 句子终结符（含单个换行作为软边界），供分块与拆句共用
+const String kSentenceEnds = '。！？.!?…\n';
+
 /// 输出拆分器 — 把 AI 的长回复拆成有节奏的片段
 enum SplitStyle { natural, asWhole }
 
@@ -68,7 +71,7 @@ class OutputSplitter {
     final buffer = StringBuffer();
     for (int i = 0; i < text.length; i++) {
       buffer.write(text[i]);
-      if ('。！？.!?\n'.contains(text[i])) {
+      if (kSentenceEnds.contains(text[i])) {
         final sentence = buffer.toString().trim();
         if (sentence.isNotEmpty) {
           sentences.add(sentence);
@@ -85,6 +88,6 @@ class OutputSplitter {
 
   /// 统计句子数量（粗略）
   static int _countSentences(String text) {
-    return '。！？.!?\n'.split('').fold(0, (count, c) => count + c.allMatches(text).length) + 1;
+    return kSentenceEnds.split('').fold(0, (count, c) => count + c.allMatches(text).length) + 1;
   }
 }

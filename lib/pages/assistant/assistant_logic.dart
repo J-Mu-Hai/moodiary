@@ -10,6 +10,7 @@ import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/ai_functions.dart';
 import 'package:moodiary/services/ai_prompt_manager.dart';
+import 'package:moodiary/services/reply_chunker.dart';
 import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/notice_util.dart';
 import 'package:refreshed/refreshed.dart';
@@ -25,6 +26,9 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
 
   String? _systemPrompt; // AI 性格提示词（缓存）
   bool _systemInjected = false;
+
+  bool _isGenerating = false; // 防并发发送
+  int _session = 0; // newChat/切模型时自增，作废进行中的流
 
   List<double> heightList = [];
 
@@ -173,8 +177,13 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
 
   /// 执行函数调用，并把结果返回给 AI 生成最终答案
   Future<void> _executeFunctionCalls(
-      List<(String, Map<String, String>)> calls, String originalReply) async {
-    if (_currentProvider == null) return;
+      List<(String, Map<String, String>)> calls, String originalReply,
+      {int depth = 0}) async {
+    if (_currentProvider == null || depth >= 2) return; // 最多两跳，防死循环
+
+    // 函数执行 + 二次生成期间亮打字指示器（AI"正在查数据"）
+    state.isTyping.value = true;
+    update();
 
     try {
       // 1. 执行所有函数
@@ -184,44 +193,125 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
         results.add(result?.summary ?? '查询失败');
       }
 
-      // 2. 更新用户消息，追加函数结果
+      // 2. 追加函数结果
       final functionResultMsg = '函数调用结果：\n${results.join('\n')}\n\n请基于以上数据，自然、简洁地回应用户。';
 
-      // 3. 重新调用 AI（带上原始回复 + 函数结果）
-      final followUpMessages = state.messages
+      // 3. 从 state.messages 重建消息，去掉最后一个 user 之后的中间气泡
+      var followUp = state.messages
           .map((m) => AIMessage(role: m.role, content: m.content))
           .toList();
-
-      // 把原始回复（含 CALL）替换为函数结果
-      if (followUpMessages.isNotEmpty &&
-          followUpMessages.last.role == 'assistant') {
-        followUpMessages[followUpMessages.length - 1] =
-            AIMessage(role: 'assistant', content: originalReply);
-        followUpMessages.add(AIMessage(role: 'system', content: functionResultMsg));
-        followUpMessages.add(AIMessage(role: 'user', content: '请用刚才的查询结果，给出最终回答。'));
+      var lastUser = -1;
+      for (var i = followUp.length - 1; i >= 0; i--) {
+        if (followUp[i].role == 'user') {
+          lastUser = i;
+          break;
+        }
+      }
+      while (followUp.length - 1 > lastUser) {
+        followUp.removeLast();
       }
 
+      // 4. 追加原始回复（含 CALL 的推理）+ 函数结果 + 追问
+      followUp.add(AIMessage(role: 'assistant', content: originalReply));
+      followUp.add(AIMessage(role: 'system', content: functionResultMsg));
+      followUp.add(AIMessage(role: 'user', content: '请用刚才的查询结果，给出最终回答。'));
+      followUp = _coalesceMessages(followUp);
+
+      // 5. 二次调用补上人格与时间（system 不进 state，不补则人格/日期又丢失）
+      if (_systemPrompt != null && _systemPrompt!.isNotEmpty) {
+        followUp.insert(0, AIMessage(role: 'system', content: _systemPrompt!));
+      }
+      final sysCount = followUp.takeWhile((m) => m.role == 'system').length;
+      followUp.insert(sysCount, _timeMessage());
+
+      // 6. 二次流式回复，同样分块成气泡
       final followStream = await _currentProvider!.chat(
-        messages: followUpMessages,
+        messages: followUp,
         modelOverride: state.currentModel.value,
       );
+      final chunker = await _streamAssistantReply(followStream);
 
-      // 4. 展示最终回答
-      final finalContent = StringBuffer();
-      await for (final chunk in followStream) {
-        if (chunk.isNotEmpty) {
-          finalContent.write(chunk);
-          if (state.messages.isNotEmpty) {
-            state.messages[state.messages.length - 1] =
-                AIMessage(role: 'assistant', content: finalContent.toString());
-            update();
-            toBottom();
-          }
-        }
+      // 7. 二次回复里再出现 CALL → 递归处理
+      final nested = _extractFunctionCalls(chunker.raw);
+      if (nested.isNotEmpty) {
+        await _executeFunctionCalls(nested, chunker.raw, depth: depth + 1);
       }
     } catch (e) {
       print('[FunctionCall Error] $e');
+      state.isTyping.value = false;
+      update();
     }
+  }
+
+  /// 当前时间消息：每次请求新鲜注入，杜绝 AI 日期幻觉
+  AIMessage _timeMessage() {
+    final now = DateTime.now();
+    const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+    final wd = weekdays[now.weekday - 1];
+    final hh = now.hour.toString().padLeft(2, '0');
+    final mm = now.minute.toString().padLeft(2, '0');
+    return AIMessage(
+      role: 'system',
+      content: '【当前时间】今天是 ${now.year}年${now.month}月${now.day}日 星期$wd，'
+          '现在 $hh:$mm。回答涉及日期、时间、星期、时效性的问题时，一律以此刻为准，不要猜测或编造。',
+    );
+  }
+
+  /// 出站消息合并：连续同角色消息合并成一条（兼容各 API + 省 token）
+  List<AIMessage> _coalesceMessages(List<AIMessage> msgs) {
+    final out = <AIMessage>[];
+    for (final m in msgs) {
+      if (out.isNotEmpty && out.last.role == m.role) {
+        out[out.length - 1] = AIMessage(
+            role: m.role, content: '${out.last.content}\n${m.content}');
+      } else {
+        out.add(m);
+      }
+    }
+    return out;
+  }
+
+  /// 流式接收 AI 输出 → 增量分块成气泡 → 管理打字指示器。返回分块器（raw 供提取 CALL）。
+  Future<ReplyChunker> _streamAssistantReply(Stream<String> stream) async {
+    final mySession = _session;
+    final chunker = ReplyChunker();
+    var firstBubble = true;
+    state.isTyping.value = true;
+    update();
+    WidgetsBinding.instance.addPostFrameCallback((_) => toBottom());
+
+    try {
+      await for (final chunk in stream) {
+        if (_session != mySession) break; // newChat 已作废本次会话
+        if (chunk.isEmpty) continue;
+        for (final b in chunker.add(chunk)) {
+          state.messages.add(AIMessage(role: 'assistant', content: b));
+          if (firstBubble) {
+            firstBubble = false;
+            HapticFeedback.vibrate();
+          }
+          update();
+          toBottom();
+        }
+      }
+      if (_session == mySession) {
+        for (final b in chunker.finish()) {
+          state.messages.add(AIMessage(role: 'assistant', content: b));
+          if (firstBubble) {
+            firstBubble = false;
+            HapticFeedback.vibrate();
+          }
+          update();
+          toBottom();
+        }
+      }
+    } finally {
+      if (_session == mySession) {
+        state.isTyping.value = false;
+        update();
+      }
+    }
+    return chunker;
   }
 
   /// 检测用户提问是否涉及日记内容，自动查询并注入
@@ -331,7 +421,9 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
   }
 
   void newChat() {
+    _session++; // 作废进行中的流
     state.messages.clear();
+    state.isTyping.value = false;
     _systemInjected = false;
     update();
   }
@@ -350,6 +442,11 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
       NoticeUtil.showToast('当前 AI 服务商配置不完整');
       return;
     }
+    if (_isGenerating) {
+      NoticeUtil.showToast('正在生成中，请稍候');
+      return;
+    }
+    _isGenerating = true;
 
     clearText();
     unFocus();
@@ -357,13 +454,14 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     try {
       // 先把用户消息加入界面显示
       state.messages.add(AIMessage(role: 'user', content: ask));
+      state.isTyping.value = true; // 建连阶段就亮"正在输入"
       update();
       toBottom();
 
-      // 构建发送给 AI 的消息列表
-      List<AIMessage> chatMessages = state.messages
+      // 构建发送给 AI 的消息列表（连续同角色合并）
+      List<AIMessage> chatMessages = _coalesceMessages(state.messages
           .map((m) => AIMessage(role: m.role, content: m.content))
-          .toList();
+          .toList());
 
       // 注入 AI 性格系统提示词（每个对话只注入一次）
       if (!_systemInjected) {
@@ -396,37 +494,23 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
         }
       }
 
+      // 时间注入：每次请求都新鲜注入，放在第一个非 system 消息之前（离用户问题最近）
+      final sysCount = chatMessages.takeWhile((m) => m.role == 'system').length;
+      chatMessages.insert(sysCount, _timeMessage());
+
       // 发起流式请求
       final stream = await _currentProvider!.chat(
         messages: chatMessages,
         modelOverride: state.currentModel.value,
       );
 
-      // 添加空助手消息占位
-      final replyMsg = AIMessage(role: 'assistant', content: '');
-      state.messages.add(replyMsg);
-      update();
-
-      // 接收流
-      final replyContent = StringBuffer();
-      await for (final chunk in stream) {
-        if (chunk.isNotEmpty) {
-          replyContent.write(chunk);
-          final last = state.messages.last;
-          if (last.role == 'assistant') {
-            state.messages[state.messages.length - 1] =
-                AIMessage(role: 'assistant', content: replyContent.toString());
-            HapticFeedback.vibrate();
-            update();
-            toBottom();
-          }
-        }
-      }
+      // 接收流：增量分块成气泡（不再添加空占位消息）
+      final chunker = await _streamAssistantReply(stream);
 
       // 处理 AI 的函数调用请求（[[CALL:函数名|参数JSON]]）
-      final calls = _extractFunctionCalls(replyContent.toString());
+      final calls = _extractFunctionCalls(chunker.raw);
       if (calls.isNotEmpty) {
-        await _executeFunctionCalls(calls, replyContent.toString());
+        await _executeFunctionCalls(calls, chunker.raw);
       }
     } catch (e, stack) {
       final providerName = _currentProvider?.displayName ?? '未知';
@@ -440,13 +524,8 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
       } catch (_) {}
       print('[AI ERROR] Provider=$providerName Error=$e\n$stack');
       NoticeUtil.showToast('请求失败，请检查 API 配置');
-      // 如果用户消息已经添加（首次失败时还没添加）
-      if (state.messages.isNotEmpty &&
-          state.messages.last.role == 'assistant' &&
-          state.messages.last.content.isEmpty) {
-        state.messages.removeLast();
-        update();
-      }
+    } finally {
+      _isGenerating = false;
     }
   }
 

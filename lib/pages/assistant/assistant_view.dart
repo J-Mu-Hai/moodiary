@@ -16,6 +16,7 @@ import 'package:moodiary/utils/notice_util.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'assistant_logic.dart';
+import 'typing_bubble.dart';
 
 class AssistantPage extends StatelessWidget {
   const AssistantPage({super.key});
@@ -253,7 +254,7 @@ class AssistantPage extends StatelessWidget {
               ),
             // 对话列表
             Expanded(
-              child: messages.isEmpty
+              child: messages.isEmpty && !state.isTyping.value
                   ? Center(
                       child: FaIcon(
                         FontAwesomeIcons.comments,
@@ -264,8 +265,12 @@ class AssistantPage extends StatelessWidget {
                   : ListView.builder(
                       controller: logic.scrollController,
                       padding: const EdgeInsets.all(8),
-                      itemCount: messages.length,
+                      itemCount:
+                          messages.length + (state.isTyping.value ? 1 : 0),
                       itemBuilder: (context, index) {
+                        if (index == messages.length) {
+                          return const TypingBubble();
+                        }
                         return buildChatBubble(messages[index], index);
                       },
                     ),

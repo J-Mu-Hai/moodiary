@@ -125,7 +125,12 @@ class AiPromptManager {
         }
       }
       buf.writeln('需要获取数据时，用 [[CALL:函数名|参数JSON]] 格式。');
-      buf.writeln('例如: [[CALL:getDiaryByDateRange|{"startDate":"2026-07-01","endDate":"2026-07-07"}]]');
+      // 示例日期动态生成，避免教模型错误的"当前"日期
+      String fmtDate(DateTime d) =>
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      final today = DateTime.now();
+      final weekAgo = today.subtract(const Duration(days: 7));
+      buf.writeln('例如: [[CALL:getDiaryByDateRange|{"startDate":"${fmtDate(weekAgo)}","endDate":"${fmtDate(today)}"}]]');
     }
 
     // 触发器上下文

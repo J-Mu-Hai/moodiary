@@ -7,6 +7,7 @@ class AssistantState {
   late RxString currentProviderId;
   late RxString currentModel;
   late RxBool diaryAccessEnabled; // AI 是否可读取日记
+  late RxBool isTyping; // AI 是否正在输入（显示"正在输入..."）
 
   late KeyboardState keyboardState;
 
@@ -15,6 +16,7 @@ class AssistantState {
     currentProviderId = ''.obs;
     currentModel = ''.obs;
     diaryAccessEnabled = false.obs;
+    isTyping = false.obs;
     keyboardState = KeyboardState.closed;
   }
 }
