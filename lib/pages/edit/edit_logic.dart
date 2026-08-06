@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:moodiary/api/api.dart';
 import 'package:moodiary/common/models/isar/diary.dart';
+import 'package:moodiary/common/models/task_plan.dart';
 import 'package:moodiary/common/values/diary_type.dart';
 import 'package:moodiary/common/values/keyboard_state.dart';
 import 'package:moodiary/components/keyboard_listener/keyboard_listener.dart';
@@ -21,6 +22,8 @@ import 'package:moodiary/main.dart';
 import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/router/app_routes.dart';
+import 'package:moodiary/services/task_advisor.dart';
+import 'package:moodiary/services/task_doc_parser.dart';
 import 'package:moodiary/src/rust/api/kmp.dart';
 import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/markdown_util.dart';
@@ -48,6 +51,9 @@ class EditLogic extends GetxController {
   //聚焦对象
   late FocusNode contentFocusNode = FocusNode();
   late FocusNode titleFocusNode = FocusNode();
+
+  /// 任务面板 AI 输入框焦点（🤖AI 标签跳转用）
+  late final FocusNode taskInputFocusNode = FocusNode();
   bool _shouldRestoreFocus = false; // 工具栏操作后恢复焦点
   Timer? _timer;
 
@@ -114,6 +120,7 @@ class EditLogic extends GetxController {
     contentFocusNode.dispose();
     quillController?.dispose();
     markdownTextEditingController?.dispose();
+    taskInputFocusNode.dispose();
     _timer?.cancel();
     _timer = null;
     super.onClose();
@@ -201,8 +208,178 @@ class EditLogic extends GetxController {
       }
       state.totalCount.value = _toPlainText().length;
     }
+    // 任务规划模式：识别「任务管理」分类
+    if (_isTaskPlanningCategory()) {
+      _enterTaskPlanningMode();
+    }
     state.isInit = true;
     update(['body']);
+  }
+
+  // ---------- 任务规划模式 ----------
+
+  /// 当前文档是否属于「任务管理」分类
+  bool _isTaskPlanningCategory() {
+    if (state.categoryName == '任务管理') return true;
+    // 新增时若 autoCategory 未开，categoryName 为空，用传入的 categoryId 反查
+    if (state.isNew && Get.arguments.runtimeType == List<Object?>) {
+      final id = Get.arguments[1] as String?;
+      if (id != null) {
+        final cat = IsarUtil.getCategoryName(id);
+        if (cat?.categoryName == '任务管理') return true;
+      }
+    }
+    return false;
+  }
+
+  /// 进入任务规划模式
+  void _enterTaskPlanningMode() {
+    state.isTaskPlanning.value = true;
+    if (state.isNew) {
+      // 新建：强制 markdown + 预填 YAML 模板
+      state.type = DiaryType.markdown;
+      markdownTextEditingController = TextEditingController(
+        text: TaskDocParser.buildNewDocTemplate(),
+      );
+      state.renderMarkdown.value = true;
+    } else if (state.type == DiaryType.markdown) {
+      // 已有 markdown：渲染为主
+      state.renderMarkdown.value = true;
+    }
+    // 已有 text/richText：保持原编辑（本期不做富文本→markdown 转换）
+  }
+
+  /// 点击引导标签，插入对应 markdown 模板
+  void insertMarkdownTemplate(TaskTag tag) {
+    if (markdownTextEditingController == null) return;
+    if (tag == TaskTag.ai) {
+      // 🤖AI 标签：聚焦右侧面板输入框并前缀 @AI
+      focusTaskInput();
+      return;
+    }
+    if (tag == TaskTag.page) {
+      // 📄 翻页标签：新建一页并切过去
+      addTaskPage();
+      return;
+    }
+    if (state.renderMarkdown.value) {
+      // 渲染模式：追加到文档末尾
+      markdownTextEditingController!.text = TaskDocParser.appendText(
+        markdownTextEditingController!.text,
+        tag.template,
+      );
+    } else {
+      // 编辑模式：光标处插入（所在行非空先换行）
+      _insertTextAtCursor(tag.template);
+    }
+    update(['task']);
+  }
+
+  /// 在 markdown 光标处插入文本（参考 Format 的选区改写范式）
+  void _insertTextAtCursor(String text) {
+    final controller = markdownTextEditingController!;
+    final sel = controller.selection;
+    final value = controller.value;
+
+    var insertText = text;
+    // 光标所在行非空 → 先换行再插入
+    final lineStart = value.text.lastIndexOf('\n', sel.start - 1) + 1;
+    final lineEnd = value.text.indexOf('\n', sel.start);
+    final lineText = value.text.substring(
+      lineStart,
+      lineEnd == -1 ? value.text.length : lineEnd,
+    );
+    if (lineText.trim().isNotEmpty) {
+      insertText = '\n$insertText';
+    }
+
+    final newText = value.text.replaceRange(sel.start, sel.end, insertText);
+    controller.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: sel.start + insertText.length),
+    );
+    contentFocusNode.requestFocus();
+  }
+
+  /// 勾选/取消任务复选框（翻转源行）
+  void toggleTask(int srcLine) {
+    if (markdownTextEditingController == null) return;
+    markdownTextEditingController!.text = TaskDocParser.toggleTask(
+      markdownTextEditingController!.text,
+      srcLine,
+    );
+    update(['task']);
+  }
+
+  /// 应用 AI 卡片的一个操作，修改文档
+  void applyTaskAction(TaskCardModel card, TaskAction action) {
+    if (markdownTextEditingController == null) return;
+    final current = markdownTextEditingController!.text;
+    final updated = TaskAdvisor.apply(current, action);
+    if (updated != current) {
+      markdownTextEditingController!.text = updated;
+      NoticeUtil.showToast('AI 已修改');
+    }
+    state.taskCards.remove(card);
+    update(['task']);
+  }
+
+  /// 运行一次任务分析，卡片追加到卡片流
+  Future<void> runTaskAnalysis(String instruction) async {
+    if (markdownTextEditingController == null) return;
+    state.taskAnalyzing.value = true;
+    update(['task']);
+    try {
+      final doc = TaskDocParser.parse(markdownTextEditingController!.text);
+      final cards = await TaskAdvisor.analyze(doc, instruction);
+      state.taskCards.addAll(cards);
+    } catch (e) {
+      NoticeUtil.showToast('分析失败: $e');
+    } finally {
+      state.taskAnalyzing.value = false;
+      update(['task']);
+    }
+  }
+
+  /// 聚焦右侧面板 AI 输入框并填入 @AI 前缀
+  void focusTaskInput() {
+    state.taskPanelCollapsed.value = false;
+    state.taskInput.value = '@AI ';
+    taskInputFocusNode.requestFocus();
+    update(['task']);
+  }
+
+  /// 折叠/展开右侧 AI 面板
+  void toggleTaskPanel() {
+    state.taskPanelCollapsed.value = !state.taskPanelCollapsed.value;
+    update(['task']);
+  }
+
+  /// 忽略（移除）一条 AI 卡片
+  void dismissTaskCard(TaskCardModel card) {
+    state.taskCards.remove(card);
+    update(['task']);
+  }
+
+  /// 切换到指定页（翻页）
+  void switchTaskPage(int index) {
+    if (index < 0) return;
+    state.taskCurrentPage.value = index;
+    update(['task']);
+  }
+
+  /// 新建一页（追加 `# 📄 页面N` 并切到新页）
+  void addTaskPage() {
+    if (markdownTextEditingController == null) return;
+    final pages =
+        TaskDocParser.parsePages(markdownTextEditingController!.text);
+    final newName = '页面 ${pages.length + 1}';
+    markdownTextEditingController!.text = TaskDocParser.appendText(
+      markdownTextEditingController!.text,
+      '# 📄 $newName\n',
+    );
+    state.taskCurrentPage.value = pages.length;
+    update(['task']);
   }
 
   //计算写作时长
@@ -468,13 +645,28 @@ class EditLogic extends GetxController {
 
   DateTime? oldTime;
 
+  /// 是否为空白新文档（无标题且无正文），空白退出不保存
+  bool get _isBlankDoc {
+    if (!state.isNew) return false; // 编辑已有文档永不视为空白
+    final titleBlank = titleTextEditingController.text.trim().isEmpty;
+    final contentBlank = state.type == DiaryType.markdown
+        ? markdownTextEditingController!.text.trim().isEmpty
+        : quillController!.document.toPlainText().trim().isEmpty;
+    return titleBlank && contentBlank;
+  }
+
   void handleBack() {
     final DateTime currentTime = DateTime.now();
     if (oldTime != null &&
         currentTime.difference(oldTime!) < const Duration(seconds: 3)) {
       // 第二次返回：自动保存后退出（与右上角对号一致，saveDiary 内部会 Get.back）
       unFocus();
-      saveDiary();
+      if (_isBlankDoc) {
+        // 空白新文档直接退出，不创建空日记
+        Get.back();
+      } else {
+        saveDiary();
+      }
     } else {
       oldTime = currentTime;
       NoticeUtil.showToast(l10n.backAgainToExit);

@@ -1,5 +1,6 @@
 import 'package:cross_file/cross_file.dart';
 import 'package:moodiary/common/models/isar/diary.dart';
+import 'package:moodiary/common/models/task_plan.dart';
 import 'package:moodiary/common/values/diary_type.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:refreshed/refreshed.dart';
@@ -54,6 +55,25 @@ class EditState {
 
   // 是否渲染markdown
   RxBool renderMarkdown = false.obs;
+
+  // ---- 任务规划模式（「任务管理」分类）----
+  // 是否处于任务规划模式
+  RxBool isTaskPlanning = false.obs;
+
+  // 右侧 AI 面板是否折叠
+  RxBool taskPanelCollapsed = false.obs;
+
+  // AI 建议卡片流
+  RxList<TaskCardModel> taskCards = <TaskCardModel>[].obs;
+
+  // 面板输入
+  RxString taskInput = ''.obs;
+
+  // AI 分析中
+  RxBool taskAnalyzing = false.obs;
+
+  // 当前翻页所在页索引
+  RxInt taskCurrentPage = 0.obs;
 
   // 自动获取天气
   bool get autoWeather => PrefUtil.getValue<bool>('autoWeather')!;

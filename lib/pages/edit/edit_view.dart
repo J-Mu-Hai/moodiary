@@ -31,6 +31,9 @@ import 'package:moodiary/utils/theme_util.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'edit_logic.dart';
+import 'task_guide_bar.dart';
+import 'task_panel.dart';
+import 'task_render_view.dart';
 
 class EditPage extends StatelessWidget {
   const EditPage({super.key});
@@ -1042,10 +1045,15 @@ class EditPage extends StatelessWidget {
                         ),
                       ),
                     )
-                  : _buildMarkdownWidget(
-                      brightness: colorScheme.brightness,
-                      data: logic.markdownTextEditingController!.text,
-                    ),
+                  : state.isTaskPlanning.value
+                      ? GetBuilder<EditLogic>(
+                          id: 'task',
+                          builder: (_) => TaskRenderView(logic: logic),
+                        )
+                      : _buildMarkdownWidget(
+                          brightness: colorScheme.brightness,
+                          data: logic.markdownTextEditingController!.text,
+                        ),
             );
           }),
         );
@@ -1075,8 +1083,29 @@ class EditPage extends StatelessWidget {
       }
     }
 
+    /// 任务面板折叠后的窄条（🤖 展开按钮）
+    Widget _buildTaskPanelCollapsed() {
+      final colorScheme = Theme.of(context).colorScheme;
+      return Container(
+        width: 44,
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          border: Border(
+            left: BorderSide(color: colorScheme.outlineVariant),
+          ),
+        ),
+        child: Center(
+          child: IconButton(
+            icon: const Icon(Icons.smart_toy_rounded),
+            tooltip: '展开 AI 面板',
+            onPressed: logic.toggleTaskPanel,
+          ),
+        ),
+      );
+    }
+
     Widget buildWriting() {
-      return Column(
+      final leftColumn = Column(
         children: [
           Flexible(
             child: Stack(
@@ -1104,14 +1133,44 @@ class EditPage extends StatelessWidget {
               right: 16.0,
               bottom: 16.0,
             ),
-            child: switch (state.type) {
-              DiaryType.text => textToolBar(),
-              DiaryType.richText => richTextToolBar(),
-              DiaryType.markdown => markdownToolBar(),
-            },
-          )
+            child: Column(
+              children: [
+                // 任务规划模式：引导标签栏常驻在 markdown 工具栏上方
+                if (state.isTaskPlanning.value &&
+                    state.type == DiaryType.markdown) ...[
+                  TaskGuideBar(logic: logic),
+                  const SizedBox(height: 4),
+                ],
+                switch (state.type) {
+                  DiaryType.text => textToolBar(),
+                  DiaryType.richText => richTextToolBar(),
+                  DiaryType.markdown => markdownToolBar(),
+                },
+              ],
+            ),
+          ),
         ],
       );
+
+      // 任务规划模式（markdown）：左右分栏，右侧 AI 面板
+      if (state.isTaskPlanning.value && state.type == DiaryType.markdown) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: leftColumn),
+            GetBuilder<EditLogic>(
+              id: 'task',
+              builder: (_) {
+                if (state.taskPanelCollapsed.value) {
+                  return _buildTaskPanelCollapsed();
+                }
+                return SizedBox(width: 360, child: TaskPanel(logic: logic));
+              },
+            ),
+          ],
+        );
+      }
+      return leftColumn;
     }
 
     return PopScope(
