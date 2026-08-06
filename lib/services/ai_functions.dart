@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:moodiary/common/models/isar/category.dart';
 import 'package:moodiary/presentation/isar.dart';
 
@@ -41,6 +42,8 @@ class AiFunctionSystem {
           return await _getTaskAnalysis(params['date']);
         case 'getCategories':
           return await _getCategories();
+        case 'getUniversalValues':
+          return await _getUniversalValues(params['topic']);
         default:
           return null;
       }
@@ -216,5 +219,124 @@ class AiFunctionSystem {
       data: list,
       summary: '共有 ${list.length} 个分类',
     );
+  }
+
+  /// 6. 获取通用价值观详细准则（按主题从 values_detail.md 检索）
+  static Future<AiFunctionResult> _getUniversalValues(String? topic) async {
+    try {
+      final raw = await rootBundle.loadString('assets/ai/values_detail.md');
+      final sections = _splitMarkdownSections(raw);
+
+      if (sections.isEmpty) {
+        return AiFunctionResult(
+          functionName: 'getUniversalValues',
+          data: null,
+          summary: '通用价值观详细库当前为空。',
+        );
+      }
+
+      // 按主题关键词匹配章节
+      final matched = _matchValueSections(sections, topic);
+
+      String summary;
+      if (matched.isEmpty) {
+        // 没匹配到，给出目录让 AI 换个主题词
+        final titles = sections.map((s) => s.title).join('\n');
+        summary = '未找到与"$topic"匹配的价值观主题。当前可用主题：\n$titles\n\n请用上面的主题名重新调用。';
+      } else {
+        final buf = StringBuffer();
+        for (final s in matched) {
+          buf.writeln('## ${s.title}');
+          buf.writeln(s.content);
+          buf.writeln();
+        }
+        summary = buf.toString();
+      }
+
+      // 截断防止上下文过长
+      if (summary.length > 2000) {
+        summary = '${summary.substring(0, 2000)}\n…(已截断，如需完整内容请换更具体的主题词)';
+      }
+
+      return AiFunctionResult(
+        functionName: 'getUniversalValues',
+        data: matched.map((s) => s.title).toList(),
+        summary: summary,
+      );
+    } catch (e) {
+      return AiFunctionResult(
+        functionName: 'getUniversalValues',
+        data: null,
+        summary: '通用价值观详细库加载失败: $e',
+      );
+    }
+  }
+
+  /// 把 markdown 按 `## ` 章节切块
+  static List<({String title, String content})> _splitMarkdownSections(String raw) {
+    final sections = <({String title, String content})>[];
+    String? currentTitle;
+    final currentBody = <String>[];
+
+    void flush() {
+      if (currentTitle != null) {
+        sections.add((
+          title: currentTitle!,
+          content: currentBody.join('\n').trim(),
+        ));
+      }
+    }
+
+    for (final line in raw.split('\n')) {
+      final m = RegExp(r'^##\s+(.+)').firstMatch(line);
+      if (m != null) {
+        flush();
+        currentTitle = m.group(1)!.trim();
+        currentBody.clear();
+      } else if (currentTitle != null) {
+        currentBody.add(line);
+      }
+    }
+    flush();
+    return sections;
+  }
+
+  /// 按主题关键词对章节打分：标题命中权重更高，返回最高分的前 1-2 个章节
+  static List<({String title, String content})> _matchValueSections(
+      List<({String title, String content})> sections, String? topic) {
+    if (topic == null || topic.trim().isEmpty) {
+      return sections.take(1).toList();
+    }
+
+    final keywords = topic
+        .split(RegExp(r'[\s,，。；;、/：:（）()]+'))
+        .where((k) => k.trim().isNotEmpty)
+        .toList();
+
+    final scored = sections.map((s) {
+      final titleLower = s.title.toLowerCase();
+      final bodyLower = s.content.toLowerCase();
+      var score = 0;
+      for (final kw in keywords) {
+        final k = kw.toLowerCase();
+        if (titleLower.contains(k)) {
+          score += 3;
+        } else if (bodyLower.contains(k)) {
+          score += 1;
+        }
+      }
+      return (section: s, score: score);
+    }).toList();
+
+    scored.sort((a, b) => b.score.compareTo(a.score));
+    final best = scored.where((e) => e.score > 0).toList();
+    if (best.isEmpty) return const [];
+
+    final top = best.first.score;
+    return best
+        .where((e) => e.score >= top)
+        .take(2)
+        .map((e) => e.section)
+        .toList();
   }
 }

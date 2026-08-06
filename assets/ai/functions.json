@@ -39,5 +39,13 @@
     "description": "获取所有分类列表",
     "params": [],
     "result": "[{name, diaryCount, lastUsed}]"
+  },
+  {
+    "name": "getUniversalValues",
+    "description": "获取通用价值观知识库中指定主题的详细准则。当对话涉及价值判断、人生选择、道德困惑、三观分歧、对错争议等话题，且仅凭概述不足以支撑回答时调用",
+    "params": [
+      {"name": "topic", "type": "string", "required": true, "description": "需要获取的主题关键词，例如：诚实、自由、责任、公平、爱"}
+    ],
+    "result": "对应主题的详细价值观准则文本"
   }
 ]

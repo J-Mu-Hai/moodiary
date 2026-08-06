@@ -47,6 +47,15 @@ class AiPromptManager {
     }
   }
 
+  /// 加载通用价值观概述（简短版，每次对话注入）
+  Future<String> loadUniversalValuesOverview() async {
+    try {
+      return await rootBundle.loadString('assets/ai/values_overview.md');
+    } catch (e) {
+      return '';
+    }
+  }
+
   /// 加载触发器对应的提示词，并填充数据
   Future<String> buildTriggerPrompt(
       String triggerId, Map<String, String> data) async {
@@ -76,10 +85,18 @@ class AiPromptManager {
     final personality = await loadJson('personality.json');
     final functions = await loadJson('functions.json');
     final knowledge = await loadKnowledgeBase();
+    final valuesOverview = await loadUniversalValuesOverview();
 
     final buf = StringBuffer();
     buf.writeln(base);
     buf.writeln('\n---');
+
+    // 通用价值观 · 概述（始终注入，三层结构之一）
+    if (valuesOverview.isNotEmpty) {
+      buf.writeln('\n【通用价值观 · 概述】');
+      buf.writeln('这是长期的价值基线，任何对话默认遵循。遇到复杂价值判断、三观分歧时，可调用 getUniversalValues 获取对应主题的详细准则。');
+      buf.writeln(valuesOverview);
+    }
 
     // 私有知识库（认知档案）
     if (knowledge.isNotEmpty) {
