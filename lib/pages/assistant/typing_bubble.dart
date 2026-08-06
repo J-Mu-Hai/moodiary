@@ -29,7 +29,8 @@ class _TypingBubbleState extends State<TypingBubble>
     return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
-        padding: const EdgeInsets.only(top: 4, bottom: 4, right: 64),
+        // 左偏移对齐 AI 气泡内容（头像 36 + 间距 8 + 列表 padding 8）
+        padding: const EdgeInsets.only(top: 4, bottom: 4, left: 52, right: 64),
         child: Card(
           color: colorScheme.surfaceContainerHigh, // 与 AI 气泡同色
           child: Padding(
