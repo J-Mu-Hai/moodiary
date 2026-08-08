@@ -114,6 +114,22 @@ class TaskDocParser {
     );
   }
 
+  /// 剥离 YAML 前置块（首行 `---` 到第二个 `---` 之间），用于展示层。
+  /// 非 YAML 文档（首行不是 `---`）原样返回。
+  static String stripYamlFrontmatter(String markdown) {
+    final lines = markdown.split('\n');
+    if (lines.isEmpty || lines.first.trim() != '---') return markdown;
+    var end = -1;
+    for (var i = 1; i < lines.length; i++) {
+      if (lines[i].trim() == '---') {
+        end = i;
+        break;
+      }
+    }
+    if (end < 0) return markdown;
+    return lines.sublist(end + 1).join('\n');
+  }
+
   /// 按一级标题 `# 页面名` 把文档拆成多页。
   /// 第一个 `# ` 之前的内容（含 YAML）作为"总览"页；
   /// 没有 `# ` 时整篇作为单页，行为与旧版一致。

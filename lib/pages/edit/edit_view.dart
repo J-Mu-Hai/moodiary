@@ -1154,19 +1154,23 @@ class EditPage extends StatelessWidget {
 
       // 任务规划模式（markdown）：左右分栏，右侧 AI 面板
       if (state.isTaskPlanning.value && state.type == DiaryType.markdown) {
+        // 以 AI 对话为主：左侧主区域（更宽），文档右侧次要
         return Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(child: leftColumn),
             GetBuilder<EditLogic>(
               id: 'task',
               builder: (_) {
                 if (state.taskPanelCollapsed.value) {
                   return _buildTaskPanelCollapsed();
                 }
-                return SizedBox(width: 360, child: TaskPanel(logic: logic));
+                return SizedBox(
+                  width: MediaQuery.sizeOf(context).width * 0.55,
+                  child: TaskPanel(logic: logic),
+                );
               },
             ),
+            Expanded(child: leftColumn),
           ],
         );
       }

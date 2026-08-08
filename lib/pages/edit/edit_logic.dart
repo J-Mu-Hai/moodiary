@@ -408,7 +408,10 @@ class EditLogic extends GetxController {
   String _markdownToPlainText(String markdown) {
     if (markdown.isEmpty) return '';
 
-    return MarkdownConverter.convert(markdown);
+    // 先剥离 YAML 前置块，避免卡片摘要/搜索/字数统计露出元数据
+    return MarkdownConverter.convert(
+      TaskDocParser.stripYamlFrontmatter(markdown),
+    );
   }
 
   void _listenCount() {

@@ -73,6 +73,21 @@ void main() {
     });
   });
 
+  group('TaskDocParser.stripYamlFrontmatter', () {
+    test('剥离 YAML 块，保留正文', () {
+      final stripped = TaskDocParser.stripYamlFrontmatter(sampleDoc);
+      expect(stripped, isNot(contains('project:')));
+      expect(stripped, isNot(contains('task-planning')));
+      expect(stripped, contains('## 📌 项目目标'));
+      expect(stripped, contains('- [ ] 完成动态规划专题'));
+    });
+
+    test('非 YAML 文档原样返回', () {
+      final md = '## 普通\n正文内容';
+      expect(TaskDocParser.stripYamlFrontmatter(md), md);
+    });
+  });
+
   group('TaskDocParser 变更操作', () {
     test('toggleTask 翻转指定行', () {
       final out = TaskDocParser.toggleTask(sampleDoc, 16);

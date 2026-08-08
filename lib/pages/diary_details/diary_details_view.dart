@@ -19,6 +19,7 @@ import 'package:moodiary/components/quill_embed/text_indent.dart';
 import 'package:moodiary/components/quill_embed/video_embed.dart';
 import 'package:moodiary/main.dart';
 import 'package:moodiary/presentation/pref.dart';
+import 'package:moodiary/services/task_doc_parser.dart';
 import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/theme_util.dart';
 import 'package:refreshed/refreshed.dart';
@@ -471,7 +472,9 @@ class DiaryDetailsPage extends StatelessWidget {
                                   padding: const EdgeInsets.all(8.0),
                                   child: _buildMarkdownWidget(
                                     brightness: customColorScheme.brightness,
-                                    data: state.diary.content,
+                                    // 任务规划文档的 YAML 前置块剥离后再渲染
+                                    data: TaskDocParser.stripYamlFrontmatter(
+                                        state.diary.content),
                                   ),
                                 )
                                 : QuillEditor.basic(
