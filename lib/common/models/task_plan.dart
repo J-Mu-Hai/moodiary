@@ -56,6 +56,7 @@ class TaskDoc {
     this.tasks = const [],
     this.diaryRefs = const [],
     this.aiNotes = const [],
+    this.guideStage = '',
     this.raw = '',
   });
 
@@ -88,6 +89,9 @@ class TaskDoc {
 
   /// 🤖 AI 建议记录
   final List<String> aiNotes;
+
+  /// YAML guide-stage（AI 引导阶段，1..7，8=完成；未开始为空）
+  final String guideStage;
 
   /// 原始 markdown
   final String raw;

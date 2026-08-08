@@ -1104,6 +1104,36 @@ class EditPage extends StatelessWidget {
       );
     }
 
+    /// 任务面板与文档之间的可拖拽分割线（拖拽调整 AI 面板宽度）
+    Widget _buildResizeDivider(BuildContext context) {
+      final colorScheme = Theme.of(context).colorScheme;
+      return MouseRegion(
+        cursor: SystemMouseCursors.resizeLeftRight,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragUpdate: (details) {
+            final screenW = MediaQuery.sizeOf(context).width;
+            final next = state.taskPanelRatio.value +
+                details.delta.dx / screenW;
+            logic.setTaskPanelRatio(next);
+          },
+          child: Container(
+            width: 12,
+            color: Colors.transparent,
+            alignment: Alignment.center,
+            child: Container(
+              width: 3,
+              height: 36,
+              decoration: BoxDecoration(
+                color: colorScheme.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     Widget buildWriting() {
       final leftColumn = Column(
         children: [
@@ -1165,11 +1195,14 @@ class EditPage extends StatelessWidget {
                   return _buildTaskPanelCollapsed();
                 }
                 return SizedBox(
-                  width: MediaQuery.sizeOf(context).width * 0.55,
+                  width:
+                      MediaQuery.sizeOf(context).width *
+                      state.taskPanelRatio.value,
                   child: TaskPanel(logic: logic),
                 );
               },
             ),
+            _buildResizeDivider(context),
             Expanded(child: leftColumn),
           ],
         );

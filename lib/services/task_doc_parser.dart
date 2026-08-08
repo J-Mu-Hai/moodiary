@@ -110,6 +110,7 @@ class TaskDocParser {
       tasks: tasks,
       diaryRefs: diaryRefs,
       aiNotes: aiNotes,
+      guideStage: yamlValues['guide-stage'] ?? '',
       raw: markdown,
     );
   }
@@ -224,21 +225,62 @@ class TaskDocParser {
 
   /// 修改 YAML deadline 行；没有则插入；没有 YAML 则生成最小 YAML
   static String setDeadline(String markdown, String date) {
+    return setYamlValue(markdown, 'deadline', date);
+  }
+
+  /// 修改 YAML 任意键值：有该键行则替换，无键则插入 YAML 首行，
+  /// 无 YAML 块则生成最小前缀。
+  static String setYamlValue(String markdown, String key, String value) {
     final lines = markdown.split('\n');
+    final re = RegExp('^$key:\\s*.*\$');
     for (var i = 0; i < lines.length; i++) {
-      if (RegExp(r'^deadline:\s*.*$').hasMatch(lines[i])) {
-        lines[i] = 'deadline: $date';
+      if (re.hasMatch(lines[i])) {
+        lines[i] = '$key: $value';
         return lines.join('\n');
       }
     }
     if (lines.isNotEmpty && lines[0].trim() == '---') {
-      lines.insert(1, 'deadline: $date');
+      lines.insert(1, '$key: $value');
       return lines.join('\n');
     }
     final now = DateTime.now();
     final created = _fmtDate(now);
     return '---\nproject: 新项目\ntype: task-planning\ncreated: $created\n'
-        'deadline: $date\nai-mode: active\n---\n\n$markdown';
+        '$key: $value\nai-mode: active\n---\n\n$markdown';
+  }
+
+  /// 整节替换「## heading」到下一个标题/文末的内容（不含标题行）；
+  /// 节不存在则追加到文末。仿 addAiNote 的整节版。
+  static String upsertSection(String markdown, String heading, String body) {
+    final target = heading.startsWith('## ') ? heading : '## $heading';
+    final bodyText = body.trim();
+    final lines = markdown.split('\n');
+    var start = -1;
+    var end = lines.length;
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].trim() == target) {
+        start = i;
+        continue;
+      }
+      if (start >= 0 && RegExp(r'^#{1,6}\s+').hasMatch(lines[i])) {
+        end = i;
+        break;
+      }
+    }
+    if (start < 0) {
+      final section = bodyText.isEmpty
+          ? '\n$target\n'
+          : '\n$target\n$bodyText\n';
+      return '${markdown.trimRight()}$section';
+    }
+    final newBlock = <String>[
+      target,
+      if (bodyText.isNotEmpty) ...bodyText.split('\n'),
+    ];
+    final tail = lines.sublist(end);
+    return '${lines.sublist(0, start).join('\n')}\n'
+        '${newBlock.join('\n')}\n'
+        '${tail.isEmpty ? '' : tail.join('\n')}';
   }
 
   /// 追加一条 AI 建议记录到「AI 建议记录」节

@@ -1,5 +1,6 @@
 import 'package:cross_file/cross_file.dart';
 import 'package:moodiary/common/models/isar/diary.dart';
+import 'package:moodiary/common/models/isar/guide_message.dart';
 import 'package:moodiary/common/models/task_plan.dart';
 import 'package:moodiary/common/values/diary_type.dart';
 import 'package:moodiary/presentation/pref.dart';
@@ -63,6 +64,9 @@ class EditState {
   // 右侧 AI 面板是否折叠
   RxBool taskPanelCollapsed = false.obs;
 
+  // AI 面板宽度占屏比（可拖拽分割线调节，0.3 ~ 0.72）
+  RxDouble taskPanelRatio = 0.55.obs;
+
   // AI 建议卡片流
   RxList<TaskCardModel> taskCards = <TaskCardModel>[].obs;
 
@@ -74,6 +78,22 @@ class EditState {
 
   // 当前翻页所在页索引
   RxInt taskCurrentPage = 0.obs;
+
+  // ---- AI 引导式任务规划对话 ----
+  // 当前引导阶段（1..7，8=已完成）
+  RxInt guideStage = 1.obs;
+
+  // 引导对话记录（落库）
+  RxList<GuideMessage> guideMessages = <GuideMessage>[].obs;
+
+  // AI 回复中
+  RxBool guideAnalyzing = false.obs;
+
+  // 阶段6/7 时间触发提示
+  RxString guideNotice = ''.obs;
+
+  // initGuide 防重入
+  RxBool guideStarted = false.obs;
 
   // 自动获取天气
   bool get autoWeather => PrefUtil.getValue<bool>('autoWeather')!;

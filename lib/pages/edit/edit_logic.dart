@@ -9,7 +9,10 @@ import 'package:flutter_quill/flutter_quill.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:moodiary/api/api.dart';
+import 'package:moodiary/common/models/ai_provider.dart';
 import 'package:moodiary/common/models/isar/diary.dart';
+import 'package:moodiary/common/models/isar/guide_message.dart';
+import 'package:moodiary/common/models/task_guide.dart';
 import 'package:moodiary/common/models/task_plan.dart';
 import 'package:moodiary/common/values/diary_type.dart';
 import 'package:moodiary/common/values/keyboard_state.dart';
@@ -22,8 +25,11 @@ import 'package:moodiary/main.dart';
 import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/router/app_routes.dart';
+import 'package:moodiary/services/ai_provider_manager.dart';
+import 'package:moodiary/services/reply_chunker.dart';
 import 'package:moodiary/services/task_advisor.dart';
 import 'package:moodiary/services/task_doc_parser.dart';
+import 'package:moodiary/services/task_guide_service.dart';
 import 'package:moodiary/src/rust/api/kmp.dart';
 import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/markdown_util.dart';
@@ -56,6 +62,9 @@ class EditLogic extends GetxController {
   late final FocusNode taskInputFocusNode = FocusNode();
   bool _shouldRestoreFocus = false; // 工具栏操作后恢复焦点
   Timer? _timer;
+
+  /// 引导对话会话计数：离开页面时自增，作废进行中的流（照抄 assistant _session 范式）
+  int _guideSession = 0;
 
   late final KeyboardObserver keyboardObserver;
 
@@ -114,6 +123,7 @@ class EditLogic extends GetxController {
 
   @override
   void onClose() {
+    _guideSession++; // 作废进行中的引导流
     keyboardObserver.stop();
     titleTextEditingController.dispose();
     titleFocusNode.dispose();
@@ -247,6 +257,8 @@ class EditLogic extends GetxController {
       state.renderMarkdown.value = true;
     }
     // 已有 text/richText：保持原编辑（本期不做富文本→markdown 转换）
+    // 异步初始化引导对话（读 YAML 阶段 + 加载对话 + 时间触发检查）
+    unawaited(initGuide());
   }
 
   /// 点击引导标签，插入对应 markdown 模板
@@ -355,6 +367,12 @@ class EditLogic extends GetxController {
     update(['task']);
   }
 
+  /// 拖拽分割线：调整 AI 面板宽度占屏比（0.3 ~ 0.72）
+  void setTaskPanelRatio(double ratio) {
+    state.taskPanelRatio.value = ratio.clamp(0.3, 0.72);
+    update(['task']);
+  }
+
   /// 忽略（移除）一条 AI 卡片
   void dismissTaskCard(TaskCardModel card) {
     state.taskCards.remove(card);
@@ -381,6 +399,356 @@ class EditLogic extends GetxController {
     state.taskCurrentPage.value = pages.length;
     update(['task']);
   }
+
+  // ---------- AI 引导式任务规划对话 ----------
+
+  /// 初始化引导：读 YAML 阶段 → 加载对话 → 时间触发检查 → AI 开场
+  Future<void> initGuide() async {
+    if (state.guideStarted.value) return;
+    state.guideStarted.value = true;
+    final controller = markdownTextEditingController;
+    if (controller == null) return;
+
+    // 1. 读 YAML guide-stage（无键→1，不写回以保留空文档语义）
+    final doc = TaskDocParser.parse(controller.text);
+    final saved = int.tryParse(doc.guideStage);
+    state.guideStage.value = (saved == null || saved < 1)
+        ? 1
+        : saved.clamp(1, guideStageDone);
+
+    // 2. 从 Isar 加载对话记录（按 diaryId，跨重启续聊）
+    try {
+      final savedMsgs = await IsarUtil.getGuideMessages(state.currentDiary.id);
+      state.guideMessages.assignAll(savedMsgs);
+    } catch (e) {
+      print('[Guide Load Error] $e');
+    }
+
+    // 3. 阶段 6/7 时间触发检查
+    final triggered = _checkGuideTimeTrigger(doc);
+
+    // 4. 开场：空对话 → 当前阶段首问；到反思时间 → 发起反思
+    if (triggered) {
+      final alreadyAsked = state.guideMessages.any(
+        (m) => m.kind == 'systemNotice' && m.stage == state.guideStage.value,
+      );
+      if (!alreadyAsked) {
+        _addGuideMessage(
+          role: 'assistant',
+          kind: 'systemNotice',
+          content: state.guideNotice.value,
+          stage: state.guideStage.value,
+        );
+        await _guideAskOpening(
+            stage: state.guideStage.value, reason: 'time');
+      }
+    } else if (state.guideMessages.isEmpty) {
+      await _guideAskOpening(stage: state.guideStage.value);
+    }
+  }
+
+  /// 阶段 6/7 时间门控：created + 7/21 天 vs 今天，到点写 [state.guideNotice] 并返回 true
+  bool _checkGuideTimeTrigger(TaskDoc doc) {
+    final stage = state.guideStage.value;
+    if (stage != 6 && stage != 7) return false;
+    final createdStr = doc.created.isNotEmpty
+        ? doc.created
+        : _fmtDate(state.currentDiary.time);
+    final created = DateTime.tryParse(createdStr);
+    if (created == null) return false;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final createdDay = DateTime(created.year, created.month, created.day);
+    final days = today.difference(createdDay).inDays;
+    final threshold = stage == 6 ? 7 : 21;
+    if (days < threshold) return false;
+    state.guideNotice.value = stage == 6
+        ? '📋 已到第 7 天，该做第一周反思啦'
+        : '🌱 已到第 21 天，该做 21 天复盘啦';
+    return true;
+  }
+
+  /// 引导对话统一入口：用户输入
+  Future<void> submitGuideInput(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final provider = AiProviderManager().currentProvider;
+    if (provider == null || !provider.isConfigured) {
+      NoticeUtil.showToast('请先在实验室配置 AI 服务商');
+      return;
+    }
+    if (state.guideAnalyzing.value) {
+      NoticeUtil.showToast('AI 正在思考，请稍候');
+      return;
+    }
+    _addGuideMessage(role: 'user', content: trimmed);
+    state.guideAnalyzing.value = true;
+    update(['task']);
+    final mySession = _guideSession;
+    try {
+      final messages = await _buildGuideChatMessages(trimmed);
+      final stream = await provider.chat(
+        messages: messages,
+        modelOverride: provider.config.model,
+      );
+      await _streamGuide(stream);
+    } catch (e) {
+      print('[Guide Error] $e');
+      if (_guideSession == mySession) {
+        _addGuideMessage(
+          role: 'assistant',
+          kind: 'systemNotice',
+          content: '⚠️ 请求失败，请稍后再试。',
+          stage: state.guideStage.value,
+        );
+      }
+    } finally {
+      if (_guideSession == mySession) {
+        state.guideAnalyzing.value = false;
+        update(['task']);
+      }
+    }
+  }
+
+  /// AI 主动开场：发起当前阶段第一个问题（或反思时间的问题）
+  Future<void> _guideAskOpening({
+    required int stage,
+    String? reason,
+  }) async {
+    final provider = AiProviderManager().currentProvider;
+    if (provider == null || !provider.isConfigured) {
+      _addGuideMessage(
+        role: 'assistant',
+        kind: 'systemNotice',
+        content: '⚠️ 尚未配置 AI 服务商，请在实验室配置后再开始引导。',
+        stage: stage,
+      );
+      return;
+    }
+    if (state.guideAnalyzing.value) return;
+    state.guideAnalyzing.value = true;
+    update(['task']);
+    final mySession = _guideSession;
+    try {
+      final doc = TaskDocParser.parse(markdownTextEditingController!.text);
+      final prompt = await TaskGuideService.buildStagePrompt(
+        doc: doc,
+        stageNo: stage,
+        context: reason == 'time' ? '现在到了反思时间，按该阶段框架发起第一个问题。' : null,
+      );
+      final kicker = reason == 'time'
+          ? '现在是第 $stage 阶段（反思）。请用一句话说明到了什么时间，然后提出第一个问题。'
+          : '请开始第 $stage 阶段。先用一句话介绍本阶段要做什么，然后提出第一个问题。';
+      final messages = [
+        AIMessage(role: 'system', content: prompt),
+        AIMessage(role: 'user', content: kicker),
+      ];
+      final stream = await provider.chat(
+        messages: messages,
+        modelOverride: provider.config.model,
+      );
+      await _streamGuide(stream);
+    } catch (e) {
+      print('[Guide Opening Error] $e');
+      if (_guideSession == mySession) {
+        _addGuideMessage(
+          role: 'assistant',
+          kind: 'systemNotice',
+          content: '⚠️ 开场失败：$e',
+          stage: stage,
+        );
+      }
+    } finally {
+      if (_guideSession == mySession) {
+        state.guideAnalyzing.value = false;
+        update(['task']);
+      }
+    }
+  }
+
+  /// 流式接收引导回复 → 逐句气泡落库 → 提取 ACTION / guideComplete
+  Future<void> _streamGuide(Stream<String> stream) async {
+    final mySession = _guideSession;
+    final chunker = ReplyChunker();
+    try {
+      await for (final chunk in stream) {
+        if (_guideSession != mySession) break;
+        if (chunk.isEmpty) continue;
+        for (final b in chunker.add(chunk)) {
+          _addGuideMessage(
+              role: 'assistant', content: b, stage: state.guideStage.value);
+        }
+      }
+      if (_guideSession == mySession) {
+        for (final b in chunker.finish()) {
+          _addGuideMessage(
+              role: 'assistant', content: b, stage: state.guideStage.value);
+        }
+
+        final raw = chunker.raw;
+        // 把 ACTION 标记附加到最后一条 AI 气泡（chunker 已从显示文本剥离）
+        final actions = TaskGuideService.parseActions(raw);
+        if (actions.isNotEmpty &&
+            state.guideMessages.isNotEmpty) {
+          final last = state.guideMessages.last;
+          if (last.role == 'assistant' && last.kind == 'text') {
+            final markers = actions
+                .map((a) => '[[ACTION:${a.op}|${a.payload}]]')
+                .join('\n');
+            last.content = '${last.content}\n$markers'.trim();
+            await IsarUtil.putGuideMessage(last);
+            update(['task']);
+          }
+        }
+
+        // 阶段完成回调
+        final complete = TaskGuideService.parseGuideComplete(raw);
+        if (complete != null) {
+          await _handleGuideComplete(complete);
+        }
+      }
+    } finally {
+      if (_guideSession == mySession) {
+        state.guideAnalyzing.value = false;
+        update(['task']);
+      }
+    }
+  }
+
+  /// 组装发送给 AI 的消息：system(index 0) + 最近 40 条历史 + 本次用户输入
+  Future<List<AIMessage>> _buildGuideChatMessages(String userText) async {
+    final doc = TaskDocParser.parse(markdownTextEditingController!.text);
+    final prompt = await TaskGuideService.buildStagePrompt(
+        doc: doc, stageNo: state.guideStage.value);
+
+    final history = <AIMessage>[];
+    final msgs = state.guideMessages;
+    final start = msgs.length > 40 ? msgs.length - 40 : 0;
+    for (var i = start; i < msgs.length; i++) {
+      final m = msgs[i];
+      if (m.kind == 'stageComplete' || m.kind == 'systemNotice') continue;
+      var content = TaskGuideService.stripActionMarkers(m.content);
+      if (content.trim().isEmpty) continue;
+      history.add(AIMessage(role: m.role, content: content));
+    }
+    history.add(AIMessage(role: 'user', content: userText));
+
+    final out = _coalesceGuideMessages(history);
+    out.insert(0, AIMessage(role: 'system', content: prompt));
+    return out;
+  }
+
+  /// 出站消息合并：连续同角色合并（兼容各 API + 省 token）
+  List<AIMessage> _coalesceGuideMessages(List<AIMessage> msgs) {
+    final out = <AIMessage>[];
+    for (final m in msgs) {
+      if (out.isNotEmpty && out.last.role == m.role) {
+        out[out.length - 1] = AIMessage(
+            role: m.role, content: '${out.last.content}\n${m.content}');
+      } else {
+        out.add(m);
+      }
+    }
+    return out;
+  }
+
+  /// 阶段完成：强校验阶段号 → 写输出物章节 → 更新 YAML guide-stage → 下一阶段
+  Future<void> _handleGuideComplete(GuideComplete c) async {
+    final controller = markdownTextEditingController;
+    if (controller == null) return;
+
+    // 强校验：声称的阶段必须等于当前阶段，防 AI 乱吐 CALL
+    if (c.stage != state.guideStage.value) {
+      NoticeUtil.showToast('阶段校验失败，已忽略本次完成');
+      return;
+    }
+    if (c.nextStage <= c.stage) return;
+
+    // 本阶段回复已结束，先复位 analyzing，下一阶段开场才能通过防重入检查
+    state.guideAnalyzing.value = false;
+
+    var md = controller.text;
+    if (c.section.isNotEmpty && c.output.isNotEmpty) {
+      md = TaskDocParser.upsertSection(md, c.section, c.output);
+    }
+    final next = c.nextStage.clamp(1, guideStageDone);
+    md = TaskDocParser.setYamlValue(md, 'guide-stage', '$next');
+    controller.text = md;
+
+    // 阶段完成气泡
+    _addGuideMessage(
+      role: 'assistant',
+      kind: 'stageComplete',
+      content: c.summary.isNotEmpty
+          ? '✅ 阶段 ${c.stage} 完成：${c.summary}'
+          : '✅ 阶段 ${c.stage} 完成',
+      extra: jsonEncode({'stage': c.stage, 'section': c.section}),
+      stage: c.stage,
+    );
+
+    state.guideStage.value = next;
+
+    if (next >= guideStageDone) {
+      // 全部完成
+      _addGuideMessage(
+        role: 'assistant',
+        kind: 'text',
+        content: '🎉 恭喜！7 个阶段全部完成。计划已沉淀进右侧文档，去执行吧。',
+        stage: guideStageDone,
+      );
+    } else if (next == 6 || next == 7) {
+      // 时间门控阶段：写提示，不立即提问，等到了日子再触发
+      _addGuideMessage(
+        role: 'assistant',
+        kind: 'systemNotice',
+        content: next == 6
+            ? '第一周执行卡已生成。执行一周（约第 7 天）后回来，我们做第一周反思。'
+            : '第一周反思完成。继续执行到第 21 天，我们做最终复盘。',
+        stage: next,
+      );
+    } else {
+      await _guideAskOpening(stage: next);
+    }
+    update(['task']);
+  }
+
+  /// 气泡按钮回调：把 ACTION 应用到文档
+  void applyGuideAction(TaskAction action) {
+    if (markdownTextEditingController == null) return;
+    final current = markdownTextEditingController!.text;
+    final updated = TaskAdvisor.apply(current, action);
+    if (updated != current) {
+      markdownTextEditingController!.text = updated;
+      NoticeUtil.showToast('已应用：${action.label}');
+    }
+    update(['task']);
+  }
+
+  /// 追加一条引导消息（内存 + 落库）
+  void _addGuideMessage({
+    required String role,
+    String kind = 'text',
+    required String content,
+    String extra = '',
+    int? stage,
+  }) {
+    final m = GuideMessage()
+      ..diaryId = state.currentDiary.id
+      ..role = role
+      ..kind = kind
+      ..content = content
+      ..extra = extra
+      ..stage = stage ?? state.guideStage.value
+      ..ts = DateTime.now();
+    state.guideMessages.add(m);
+    update(['task']); // 逐句气泡即时刷新
+    unawaited(IsarUtil.putGuideMessage(m).catchError((e) {
+      print('[GuideMessage Save Error] $e');
+    }));
+  }
+
+  static String _fmtDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   //计算写作时长
   void _calculateDuration() {

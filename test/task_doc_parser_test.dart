@@ -88,6 +88,77 @@ void main() {
     });
   });
 
+  group('TaskDocParser guide-stage', () {
+    test('无 guide-stage 键时字段为空字符串', () {
+      final doc = TaskDocParser.parse(sampleDoc);
+      expect(doc.guideStage, '');
+    });
+
+    test('有 guide-stage 键时解析', () {
+      final withStage = sampleDoc.replaceFirst(
+        'ai-mode: active',
+        'ai-mode: active\nguide-stage: 3',
+      );
+      final doc = TaskDocParser.parse(withStage);
+      expect(doc.guideStage, '3');
+    });
+  });
+
+  group('TaskDocParser.setYamlValue', () {
+    test('替换已有键行', () {
+      final out = TaskDocParser.setYamlValue(sampleDoc, 'guide-stage', '2');
+      expect(TaskDocParser.parse(out).guideStage, '2');
+      expect(out, contains('guide-stage: 2'));
+    });
+
+    test('无该键时插入 YAML 首行', () {
+      final out = TaskDocParser.setYamlValue(sampleDoc, 'guide-stage', '4');
+      expect(TaskDocParser.parse(out).guideStage, '4');
+    });
+
+    test('无 YAML 块时生成最小前缀', () {
+      final out = TaskDocParser.setYamlValue(
+        '## 📝 当前阶段任务\n- [ ] 任务A',
+        'guide-stage',
+        '1',
+      );
+      expect(TaskDocParser.parse(out).guideStage, '1');
+      expect(out, startsWith('---\n'));
+    });
+  });
+
+  group('TaskDocParser.upsertSection', () {
+    test('节存在时整节替换（含标题自动补 ##）', () {
+      final out = TaskDocParser.upsertSection(
+        sampleDoc,
+        '## 📌 项目目标',
+        '> 通过算法竞赛成为省一',
+      );
+      final doc = TaskDocParser.parse(out);
+      expect(doc.goal, '通过算法竞赛成为省一');
+      // 目标节后的里程碑节仍保留
+      expect(doc.milestones.length, 2);
+    });
+
+    test('节不存在时追加到文末', () {
+      final out = TaskDocParser.upsertSection(
+        sampleDoc,
+        '## 💡 动机卡片',
+        '> 想进大厂\n> 证明自己',
+      );
+      expect(out, endsWith('## 💡 动机卡片\n> 想进大厂\n> 证明自己\n'));
+    });
+
+    test('多行 body 逐行写入', () {
+      final out = TaskDocParser.upsertSection(
+        '## A\n旧内容1\n旧内容2\n## B\n保留',
+        '## A',
+        '新内容',
+      );
+      expect(out, contains('## A\n新内容\n## B\n保留'));
+    });
+  });
+
   group('TaskDocParser 变更操作', () {
     test('toggleTask 翻转指定行', () {
       final out = TaskDocParser.toggleTask(sampleDoc, 16);

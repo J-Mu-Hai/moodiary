@@ -1,17 +1,10 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import 'package:intl/intl.dart';
-import 'package:markdown_widget/markdown_widget.dart';
 import 'package:moodiary/common/models/ai_provider.dart';
-import 'package:moodiary/common/values/border.dart';
 import 'package:moodiary/components/base/button.dart';
-import 'package:moodiary/components/base/text.dart';
-import 'package:moodiary/main.dart';
+import 'package:moodiary/components/chat/chat_bubble.dart';
 import 'package:moodiary/pages/laboratory/laboratory_logic.dart';
-import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/utils/notice_util.dart';
 import 'package:refreshed/refreshed.dart';
 
@@ -83,79 +76,9 @@ class AssistantPage extends StatelessWidget {
     }
 
     Widget buildChatBubble(AIMessage msg, int index) {
-      final isUser = msg.role == 'user';
-      final bubbleColor = isUser
-          ? colorScheme.primaryContainer
-          : colorScheme.surfaceContainerHigh;
-
-      // 头像：AI 在左、用户在右（微信式，头像在气泡外侧，顶部对齐）
-      final avatar = CircleAvatar(
-        radius: 18,
-        backgroundColor: isUser
-            ? colorScheme.primary
-            : colorScheme.surfaceContainerHighest,
-        child: Icon(
-          isUser ? Icons.person_rounded : Icons.smart_toy_rounded,
-          size: 20,
-          color: isUser ? colorScheme.onPrimary : colorScheme.onSurfaceVariant,
-        ),
-      );
-
-      // 气泡主体：贴内容收窄，靠头像侧留小尖角
-      final bubble = Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: bubbleColor,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(14),
-            topRight: const Radius.circular(14),
-            bottomLeft: Radius.circular(isUser ? 14 : 4), // 靠头像侧的小尖角
-            bottomRight: Radius.circular(isUser ? 4 : 14),
-          ),
-        ),
-        child: MarkdownBlock(
-          data: msg.content,
-          config: colorScheme.brightness == Brightness.dark
-              ? MarkdownConfig.darkConfig
-              : MarkdownConfig.defaultConfig,
-        ),
-      );
-
-      // 尾巴小三角，指向头像
-      final tail = Positioned(
-        top: 12,
-        left: isUser ? null : -7,
-        right: isUser ? -7 : null,
-        child: CustomPaint(
-          size: const Size(8, 14),
-          painter: _BubbleTailPainter(color: bubbleColor, isLeft: !isUser),
-        ),
-      );
-
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          mainAxisAlignment:
-              isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (!isUser) ...[avatar, const SizedBox(width: 8)],
-            Flexible(
-              child: IntrinsicWidth(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.sizeOf(context).width * 0.68,
-                  ),
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [bubble, tail],
-                  ),
-                ),
-              ),
-            ),
-            if (isUser) ...[const SizedBox(width: 8), avatar],
-          ],
-        ),
+      return ChatBubble(
+        content: msg.content,
+        isUser: msg.role == 'user',
       );
     }
 
@@ -303,35 +226,4 @@ class AssistantPage extends StatelessWidget {
       }),
     );
   }
-}
-
-/// 气泡尾巴小三角，尖角指向头像一侧
-class _BubbleTailPainter extends CustomPainter {
-  _BubbleTailPainter({required this.color, required this.isLeft});
-
-  final Color color;
-  final bool isLeft;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color;
-    final path = Path();
-    if (isLeft) {
-      // 尖朝左（头像在左）：直角边贴气泡左缘
-      path.moveTo(0, 4);
-      path.lineTo(size.width, 0);
-      path.lineTo(size.width, size.height);
-    } else {
-      // 尖朝右（头像在右）
-      path.moveTo(size.width, 4);
-      path.lineTo(0, 0);
-      path.lineTo(0, size.height);
-    }
-    path.close();
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _BubbleTailPainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.isLeft != isLeft;
 }

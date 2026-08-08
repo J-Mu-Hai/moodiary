@@ -10,6 +10,7 @@ import 'package:moodiary/common/values/fixed_categories.dart';
 import 'package:moodiary/common/models/isar/diary.dart';
 import 'package:moodiary/common/models/isar/expense_record.dart';
 import 'package:moodiary/common/models/isar/font.dart';
+import 'package:moodiary/common/models/isar/guide_message.dart';
 import 'package:moodiary/common/models/isar/sync_record.dart';
 import 'package:moodiary/common/models/map.dart';
 import 'package:moodiary/common/values/diary_type.dart';
@@ -30,6 +31,7 @@ class IsarUtil {
     CategorySchema,
     FontSchema,
     ExpenseRecordSchema,
+    GuideMessageSchema,
   ];
 
   static Future<void> initIsar() async {
@@ -627,5 +629,30 @@ class IsarUtil {
           (summary[record.category] ?? 0) + record.amount;
     }
     return summary;
+  }
+
+  // ========== AI 引导对话 ==========
+
+  /// 保存一条引导对话记录
+  static Future<void> putGuideMessage(GuideMessage message) async {
+    await _isar.writeAsync((isar) {
+      isar.guideMessages.put(message);
+    });
+  }
+
+  /// 获取某篇日记的引导对话（按时间升序）
+  static Future<List<GuideMessage>> getGuideMessages(String diaryId) async {
+    return await _isar.guideMessages
+        .where()
+        .diaryIdEqualTo(diaryId)
+        .sortByTs()
+        .findAllAsync();
+  }
+
+  /// 删除某篇日记的引导对话
+  static Future<void> deleteGuideMessages(String diaryId) async {
+    await _isar.writeAsync((isar) {
+      isar.guideMessages.where().diaryIdEqualTo(diaryId).deleteAll();
+    });
   }
 }
