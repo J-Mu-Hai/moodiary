@@ -11,6 +11,7 @@ import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/ai_functions.dart';
 import 'package:moodiary/services/ai_prompt_manager.dart';
 import 'package:moodiary/services/reply_chunker.dart';
+import 'package:moodiary/services/typing_pacer.dart';
 import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/notice_util.dart';
 import 'package:refreshed/refreshed.dart';
@@ -275,6 +276,7 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
   Future<ReplyChunker> _streamAssistantReply(Stream<String> stream) async {
     final mySession = _session;
     final chunker = ReplyChunker();
+    final pacer = TypingPacer();
     var firstBubble = true;
     state.isTyping.value = true;
     update();
@@ -285,6 +287,8 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
         if (_session != mySession) break; // newChat 已作废本次会话
         if (chunk.isEmpty) continue;
         for (final b in chunker.add(chunk)) {
+          // 呼吸感：句子按打字节奏逐个上屏（API 慢时几乎不加延迟）
+          await pacer.waitBefore(b.length, isFirst: firstBubble);
           state.messages.add(AIMessage(role: 'assistant', content: b));
           if (firstBubble) {
             firstBubble = false;
@@ -296,6 +300,7 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
       }
       if (_session == mySession) {
         for (final b in chunker.finish()) {
+          await pacer.waitBefore(b.length, isFirst: firstBubble);
           state.messages.add(AIMessage(role: 'assistant', content: b));
           if (firstBubble) {
             firstBubble = false;

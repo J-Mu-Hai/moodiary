@@ -28,6 +28,7 @@ import 'package:moodiary/router/app_routes.dart';
 import 'package:moodiary/services/ai_provider_manager.dart';
 import 'package:moodiary/services/reply_chunker.dart';
 import 'package:moodiary/services/task_advisor.dart';
+import 'package:moodiary/services/typing_pacer.dart';
 import 'package:moodiary/services/task_doc_parser.dart';
 import 'package:moodiary/services/task_guide_service.dart';
 import 'package:moodiary/src/rust/api/kmp.dart';
@@ -570,17 +571,24 @@ class EditLogic extends GetxController {
   Future<void> _streamGuide(Stream<String> stream) async {
     final mySession = _guideSession;
     final chunker = ReplyChunker();
+    final pacer = TypingPacer();
+    var firstBubble = true;
     try {
       await for (final chunk in stream) {
         if (_guideSession != mySession) break;
         if (chunk.isEmpty) continue;
         for (final b in chunker.add(chunk)) {
+          // 呼吸感：句子按打字节奏逐个上屏（API 慢时几乎不加延迟）
+          await pacer.waitBefore(b.length, isFirst: firstBubble);
+          firstBubble = false;
           _addGuideMessage(
               role: 'assistant', content: b, stage: state.guideStage.value);
         }
       }
       if (_guideSession == mySession) {
         for (final b in chunker.finish()) {
+          await pacer.waitBefore(b.length, isFirst: firstBubble);
+          firstBubble = false;
           _addGuideMessage(
               role: 'assistant', content: b, stage: state.guideStage.value);
         }
