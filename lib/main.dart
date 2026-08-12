@@ -18,8 +18,9 @@ import 'package:moodiary/config/env.dart';
 import 'package:moodiary/l10n/app_localizations.dart';
 import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/router/app_pages.dart';
-import 'package:moodiary/services/ai_trigger_service.dart';
 import 'package:moodiary/router/app_routes.dart';
+import 'package:moodiary/services/ai_trigger_service.dart';
+import 'package:moodiary/services/screen_time_service.dart';
 import 'package:moodiary/src/rust/frb_generated.dart';
 import 'package:moodiary/utils/log_util.dart';
 import 'package:moodiary/utils/media_util.dart';
@@ -58,6 +59,8 @@ Future<void> _initSystem() async {
   await _platFormOption();
   // 启动 AI 触发器服务
   AiTriggerService().init();
+  // 启动屏幕使用时间服务（Android 采集 + 跨端同步）
+  ScreenTimeService().init();
 }
 
 Future<void> _findLanguage() async {

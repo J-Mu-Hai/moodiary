@@ -33,7 +33,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get hopeYouHappyToday => '祝你今天愉快';
 
   @override
-  String get appName => 'Moodiary';
+  String get appName => 'Moodsonder';
 
   @override
   String get startTitle1 => '欢迎使用';

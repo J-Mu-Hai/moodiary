@@ -117,6 +117,14 @@ class SettingPage extends StatelessWidget {
                 text: l10n.settingFunctionAIAssistant,
                 onTap: logic.toAi,
               ),
+              buildAFeatureButton(
+                icon: Icon(
+                  Icons.bar_chart_rounded,
+                  color: colorScheme.secondary,
+                ),
+                text: '使用时间',
+                onTap: logic.toScreenTime,
+              ),
             ],
           ),
         ],

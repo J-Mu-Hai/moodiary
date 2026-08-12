@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' as flutter;
 import 'package:moodiary/common/models/isar/category.dart';
 import 'package:moodiary/common/models/isar/diary.dart';
+import 'package:moodiary/common/models/isar/usage_record.dart';
 import 'package:moodiary/common/values/webdav.dart';
 import 'package:moodiary/pages/home/diary/diary_logic.dart';
 import 'package:moodiary/presentation/isar.dart';
@@ -19,6 +20,9 @@ import 'package:webdav_client/webdav_client.dart' as webdav;
 
 class WebDavUtil {
   RxSet<String> syncingDiaries = <String>{}.obs;
+
+  /// 使用时间记录同步的防重入锁
+  bool _syncingUsage = false;
 
   webdav.Client? _client;
 
@@ -58,6 +62,8 @@ class WebDavUtil {
       'accept-charset': 'utf-8',
       'Content-Type': 'application/json',
     });
+    // 连接超时 10s，防止服务器不可达时请求无限期挂起
+    _client?.setConnectTimeout(10000);
   }
 
   Future<bool> checkConnectivity() async {
@@ -84,6 +90,7 @@ class WebDavUtil {
     await _client!.mkdirAll(WebDavOptions.audioPath);
     await _client!.mkdirAll(WebDavOptions.diaryPath);
     await _client!.mkdirAll(WebDavOptions.categoryPath);
+    await _client!.mkdirAll(WebDavOptions.usagePath);
     await checkSyncFlag();
   }
 
@@ -267,6 +274,111 @@ class WebDavUtil {
     // 更新服务器的同步 JSON 文件
     await updateServerSyncData(updatedSyncData);
     onComplete?.call();
+  }
+
+  /// 读取使用时间记录的同步标记（recordId -> lastModified ISO）
+  Future<Map<String, String>> fetchUsageSyncData() async {
+    if (_client == null) return {};
+    try {
+      final response = await _client!
+          .read(WebDavOptions.usageSyncFlagPath)
+          .timeout(const Duration(seconds: 15));
+      if (response.isNotEmpty) {
+        return Map<String, String>.from(jsonDecode(utf8.decode(response)));
+      }
+    } catch (_) {
+      // 标记文件尚未创建，视为空
+    }
+    return {};
+  }
+
+  /// 写回使用时间记录的同步标记
+  Future<void> updateUsageSyncData(Map<String, String> syncData) async {
+    if (_client == null) return;
+    await _client!
+        .write(WebDavOptions.usageSyncFlagPath, utf8.encode(jsonEncode(syncData)))
+        .timeout(const Duration(seconds: 15));
+  }
+
+  /// 屏幕使用时间记录的双向增量同步。
+  ///
+  /// 与 [syncDiary] 同一套"同步标记 + 逐条 JSON"范式，但使用独立的
+  /// `/Moodiary/Usage/sync.json` 与 `<id>.json`，不影响日记同步。
+  /// 手机端采集后上传，电脑端下拉展示。
+  Future<void> syncUsageRecords({
+    flutter.VoidCallback? onUpload,
+    flutter.VoidCallback? onDownload,
+    flutter.VoidCallback? onComplete,
+  }) async {
+    if (_client == null || _syncingUsage) return;
+    _syncingUsage = true;
+    try {
+      final serverSyncData = await fetchUsageSyncData();
+      final updatedSyncData = {...serverSyncData};
+      final localRecords = await IsarUtil.getAllUsageRecords();
+      final localMap = {
+        for (final r in localRecords) r.id: r.lastModified.toIso8601String()
+      };
+
+      // 服务器侧：处理删除标记 / 本地缺失或较旧的记录下载
+      for (final entry in serverSyncData.entries) {
+        final id = entry.key;
+        final serverLastModified = entry.value;
+        final localLastModified = localMap[id];
+        if (serverLastModified == 'delete') {
+          if (localLastModified != null) {
+            await IsarUtil.deleteUsageRecord(id);
+            onDownload?.call();
+          }
+          continue;
+        }
+        if (localLastModified == null ||
+            serverLastModified.compareTo(localLastModified) > 0) {
+          try {
+            final data = await _client!
+                .read('${WebDavOptions.usagePath}/$id.json')
+                .timeout(const Duration(seconds: 15));
+            final record = UsageRecord.fromJson(
+                jsonDecode(utf8.decode(data)) as Map<String, dynamic>);
+            await IsarUtil.putUsageRecords([record]);
+            onDownload?.call();
+          } catch (e) {
+            // 下载失败，移除标记避免反复尝试
+            updatedSyncData.remove(id);
+          }
+        }
+      }
+
+      // 本地侧：服务器缺失或较旧的记录上传
+      for (final record in localRecords) {
+        final serverLastModified = serverSyncData[record.id];
+        final localLastModified = record.lastModified.toIso8601String();
+        if (serverLastModified == null ||
+            serverLastModified.compareTo(localLastModified) < 0) {
+          try {
+            _client!.setHeaders({
+              'accept-charset': 'utf-8',
+              'Content-Type': 'application/json',
+            });
+            await _client!
+                .write(
+                  '${WebDavOptions.usagePath}/${record.id}.json',
+                  utf8.encode(jsonEncode(record.toJson())),
+                )
+                .timeout(const Duration(seconds: 15));
+            onUpload?.call();
+            updatedSyncData[record.id] = localLastModified;
+          } catch (e) {
+            LogUtil.printInfo('Failed to upload usage record: $e');
+          }
+        }
+      }
+
+      await updateUsageSyncData(updatedSyncData);
+      onComplete?.call();
+    } finally {
+      _syncingUsage = false;
+    }
   }
 
   Future<void> uploadSingleDiary(

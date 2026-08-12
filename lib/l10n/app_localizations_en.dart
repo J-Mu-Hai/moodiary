@@ -33,7 +33,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get hopeYouHappyToday => 'Hope you happy today';
 
   @override
-  String get appName => 'Moodiary';
+  String get appName => 'Moodsonder';
 
   @override
   String get startTitle1 => 'Welcome to the ';

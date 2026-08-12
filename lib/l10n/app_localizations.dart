@@ -146,7 +146,7 @@ abstract class AppLocalizations {
   /// No description provided for @appName.
   ///
   /// In zh, this message translates to:
-  /// **'Moodiary'**
+  /// **'Moodsonder'**
   String get appName;
 
   /// No description provided for @startTitle1.

@@ -37,6 +37,8 @@ import 'package:moodiary/pages/privacy/privacy_logic.dart';
 import 'package:moodiary/pages/privacy/privacy_view.dart';
 import 'package:moodiary/pages/recycle/recycle_logic.dart';
 import 'package:moodiary/pages/recycle/recycle_view.dart';
+import 'package:moodiary/pages/screen_time/screen_time_logic.dart';
+import 'package:moodiary/pages/screen_time/screen_time_view.dart';
 import 'package:moodiary/pages/share/share_logic.dart';
 import 'package:moodiary/pages/share/share_view.dart';
 import 'package:moodiary/pages/sponsor/sponsor_view.dart';
@@ -178,6 +180,12 @@ class AppPages {
       name: AppRoutes.webViewPage,
       page: () => const WebViewPage(),
       binds: [Bind.lazyPut(fenix: true, () => WebViewLogic())],
+    ),
+    //使用时间
+    MoodiaryGetPage(
+      name: AppRoutes.screenTimePage,
+      page: () => const ScreenTimePage(),
+      binds: [Bind.lazyPut(fenix: true, () => ScreenTimeLogic())],
     ),
   ];
 }

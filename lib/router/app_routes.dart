@@ -72,4 +72,7 @@ abstract class AppRoutes {
 
   //webView
   static const webViewPage = '/webView';
+
+  //使用时间（屏幕时间监控）
+  static const screenTimePage = '/screenTime';
 }

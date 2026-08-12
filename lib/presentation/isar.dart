@@ -12,6 +12,7 @@ import 'package:moodiary/common/models/isar/expense_record.dart';
 import 'package:moodiary/common/models/isar/font.dart';
 import 'package:moodiary/common/models/isar/guide_message.dart';
 import 'package:moodiary/common/models/isar/sync_record.dart';
+import 'package:moodiary/common/models/isar/usage_record.dart';
 import 'package:moodiary/common/models/map.dart';
 import 'package:moodiary/common/values/diary_type.dart';
 import 'package:moodiary/components/quill_embed/audio_embed.dart';
@@ -32,6 +33,7 @@ class IsarUtil {
     FontSchema,
     ExpenseRecordSchema,
     GuideMessageSchema,
+    UsageRecordSchema,
   ];
 
   static Future<void> initIsar() async {
@@ -653,6 +655,60 @@ class IsarUtil {
   static Future<void> deleteGuideMessages(String diaryId) async {
     await _isar.writeAsync((isar) {
       isar.guideMessages.where().diaryIdEqualTo(diaryId).deleteAll();
+    });
+  }
+
+  // ========== 屏幕使用时间 ==========
+
+  /// 批量保存使用时间记录
+  static Future<void> putUsageRecords(List<UsageRecord> records) async {
+    if (records.isEmpty) return;
+    await _isar.writeAsync((isar) {
+      isar.usageRecords.putAll(records);
+    });
+  }
+
+  /// 获取全部使用时间记录（用于同步建映射）
+  static Future<List<UsageRecord>> getAllUsageRecords() async {
+    return await _isar.usageRecords.where().findAllAsync();
+  }
+
+  /// 按业务 id 删除一条使用时间记录（同步删除标记用）
+  static Future<void> deleteUsageRecord(String id) async {
+    await _isar.writeAsync((isar) {
+      isar.usageRecords.where().idEqualTo(id).deleteAll();
+    });
+  }
+
+  /// 获取指定日期的使用时间记录（按时长降序）
+  static Future<List<UsageRecord>> getUsageByDay(String yMd) async {
+    return await _isar.usageRecords
+        .where()
+        .yMdEqualTo(yMd)
+        .sortByForegroundMsDesc()
+        .findAllAsync();
+  }
+
+  /// 删除某天的使用时间记录（重算前先清空）
+  static Future<void> deleteUsageByDay(String yMd) async {
+    await _isar.writeAsync((isar) {
+      isar.usageRecords.where().yMdEqualTo(yMd).deleteAll();
+    });
+  }
+
+  /// 获取某时间点之后有改动的记录（用于同步冲突判断）
+  static Future<List<UsageRecord>> getUsageRecordsModifiedSince(
+      DateTime since) async {
+    return await _isar.usageRecords
+        .where()
+        .lastModifiedGreaterThan(since)
+        .findAllAsync();
+  }
+
+  /// 删除指定时间之前的记录（清理过期数据，如 >90 天）
+  static Future<void> deleteUsageBefore(DateTime before) async {
+    await _isar.writeAsync((isar) {
+      isar.usageRecords.where().dateLessThan(before).deleteAll();
     });
   }
 }

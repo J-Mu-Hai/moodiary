@@ -71,6 +71,11 @@ class SettingLogic extends GetxController {
     Get.toNamed(AppRoutes.analysePage);
   }
 
+  void toScreenTime() {
+    HapticFeedback.selectionClick();
+    Get.toNamed(AppRoutes.screenTimePage);
+  }
+
   Future<void> toMap() async {
     if (PrefUtil.getValue<String>('tiandituKey') != null) {
       HapticFeedback.selectionClick();
