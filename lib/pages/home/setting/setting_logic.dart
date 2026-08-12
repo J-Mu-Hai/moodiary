@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/services.dart';
+import 'package:moodiary/common/models/ai_provider.dart';
 import 'package:moodiary/components/dashboard/dashboard_logic.dart';
 import 'package:moodiary/pages/home/diary/diary_logic.dart';
 import 'package:moodiary/pages/home/home_logic.dart';
@@ -86,8 +88,20 @@ class SettingLogic extends GetxController {
   }
 
   Future<void> toAi() async {
-    if (PrefUtil.getValue<String>('tencentId') != null &&
-        PrefUtil.getValue<String>('tencentKey') != null) {
+    // 检查新的 aiProviders 配置（兼容实验室里配置的任意 OpenAI 兼容服务商），
+    // 不再检查已被废弃的 tencentId/tencentKey
+    final providersJson = PrefUtil.getValue<String>('aiProviders');
+    var configured = false;
+    if (providersJson != null && providersJson.isNotEmpty) {
+      try {
+        final list = jsonDecode(providersJson) as List;
+        configured = list.any((e) {
+          final c = AIProviderConfig.fromJson(e);
+          return c.apiKey.isNotEmpty && c.baseUrl.isNotEmpty;
+        });
+      } catch (_) {}
+    }
+    if (configured) {
       HapticFeedback.selectionClick();
       Get.toNamed(AppRoutes.assistantPage);
     } else {

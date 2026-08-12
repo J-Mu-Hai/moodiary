@@ -60,6 +60,23 @@ class ExpenseCategory {
     required this.color,
   });
 
+  /// 预设图标的常量映射（码点 -> 图标）。
+  ///
+  /// [fromJson] 反序列化时据此查表取回图标，避免运行时动态构造 `IconData`，
+  /// 否则发布版构建的图标摇树（tree shake icons）会因"非常量 IconData"失败。
+  static final Map<int, IconData> _iconsByCodePoint = {
+    Icons.restaurant_rounded.codePoint: Icons.restaurant_rounded,
+    Icons.directions_bus_rounded.codePoint: Icons.directions_bus_rounded,
+    Icons.shopping_bag_rounded.codePoint: Icons.shopping_bag_rounded,
+    Icons.home_rounded.codePoint: Icons.home_rounded,
+    Icons.gamepad_rounded.codePoint: Icons.gamepad_rounded,
+    Icons.local_hospital_rounded.codePoint: Icons.local_hospital_rounded,
+    Icons.school_rounded.codePoint: Icons.school_rounded,
+    Icons.phone_android_rounded.codePoint: Icons.phone_android_rounded,
+    Icons.more_horiz_rounded.codePoint: Icons.more_horiz_rounded,
+    Icons.category_rounded.codePoint: Icons.category_rounded,
+  };
+
   Map<String, dynamic> toJson() => {
         'name': name,
         'color': color,
@@ -71,10 +88,8 @@ class ExpenseCategory {
     return ExpenseCategory(
       name: json['name'] as String,
       color: json['color'] as int,
-      icon: IconData(
-        json['iconCodePoint'] as int,
-        fontFamily: json['iconFontFamily'] as String?,
-      ),
+      icon: _iconsByCodePoint[json['iconCodePoint'] as int] ??
+          Icons.category_rounded,
     );
   }
 }

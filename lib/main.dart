@@ -10,6 +10,7 @@ import 'package:flutter_quill/flutter_quill.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:intl/find_locale.dart';
 import 'package:intl/intl.dart';
+import 'package:moodiary/common/values/default_config.dart';
 import 'package:moodiary/common/values/language.dart';
 import 'package:moodiary/components/env_badge/badge.dart';
 import 'package:moodiary/components/frosted_glass_overlay/frosted_glass_overlay_view.dart';
@@ -38,6 +39,8 @@ Future<void> _initSystem() async {
   WidgetsFlutterBinding.ensureInitialized();
   await RustLib.init();
   await PrefUtil.initPref();
+  // 预填个人默认配置（WebDAV + DeepSeek），仅在对应配置为空时写入
+  await DefaultConfig.seed();
   await IsarUtil.initIsar();
   await IsarUtil.ensureFixedCategories();
   await ThemeUtil().buildTheme();
