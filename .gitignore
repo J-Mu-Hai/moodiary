@@ -8,6 +8,9 @@
 .build/
 .buildlog/
 .history
+
+# 本地敏感配置（WebDAV / DeepSeek 凭据，勿上传）
+.env.local
 .svn/
 .swiftpm/
 migrate_working_dir/
