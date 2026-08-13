@@ -680,13 +680,26 @@ class IsarUtil {
     });
   }
 
-  /// 获取指定日期的使用时间记录（按时长降序）
+  /// 获取指定日期的使用时间记录（按时长降序）。
+  ///
+  /// 会按包名去重（同一天同一应用只保留时长最长的一条）。历史版本曾用
+  /// 随机 uuid 作为 UsageRecord.id，导致每次采集都新增一条，表里同一天
+  /// 同一应用可能堆积成千上万条——一次性渲染会打爆主线程（ANR 卡死）。
   static Future<List<UsageRecord>> getUsageByDay(String yMd) async {
-    return await _isar.usageRecords
+    final all = await _isar.usageRecords
         .where()
         .yMdEqualTo(yMd)
         .sortByForegroundMsDesc()
         .findAllAsync();
+    final seen = <String>{};
+    final result = <UsageRecord>[];
+    for (final r in all) {
+      // 已按时长降序，第一个出现的包名就是该包最长的一条
+      if (seen.add(r.packageName)) {
+        result.add(r);
+      }
+    }
+    return result;
   }
 
   /// 删除某天的使用时间记录（重算前先清空）

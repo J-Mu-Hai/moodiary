@@ -22,9 +22,11 @@ Map<String, List<UsageRecord>> groupUsageByDay(
     if (totalMs <= 0) continue;
     final date = dayStartFromKey(dayKey);
     if (date == null) continue;
+    final packageName = item['packageName'] as String? ?? '';
     result.putIfAbsent(dayKey, () => []).add(UsageRecord()
+      ..id = usageRecordId(date, packageName)
       ..date = date
-      ..packageName = item['packageName'] as String? ?? ''
+      ..packageName = packageName
       ..appName = item['appName'] as String? ?? ''
       ..foregroundMs = totalMs
       ..lastModified = nowTs);

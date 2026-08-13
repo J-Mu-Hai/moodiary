@@ -213,10 +213,14 @@ class WebDavUtil {
       if (serverLastModified == 'delete') {
         if (localLastModified != null) {
           syncingDiaries.add(diaryId);
-          await _deleteDiary(
-              localDiaries.firstWhere((element) => element.id == diaryId));
-          Bind.find<DiaryLogic>().refreshAll();
-          syncingDiaries.remove(diaryId);
+          try {
+            await _deleteDiary(
+                localDiaries.firstWhere((element) => element.id == diaryId));
+            Bind.find<DiaryLogic>().refreshAll();
+          } finally {
+            // 无论成功与否都必须清除，否则 Rive 同步按钮会永转
+            syncingDiaries.remove(diaryId);
+          }
         }
         continue;
       }
@@ -264,10 +268,14 @@ class WebDavUtil {
           serverLastModified.compareTo(localLastModified) < 0) {
         // 服务器不存在该日记，或服务器版本较旧
         syncingDiaries.add(diary.id);
-        await _uploadDiary(diary); // 上传日记的实现
-        onUpload?.call();
-        updatedSyncData[diary.id] = localLastModified;
-        syncingDiaries.remove(diary.id);
+        try {
+          await _uploadDiary(diary); // 上传日记的实现
+          onUpload?.call();
+          updatedSyncData[diary.id] = localLastModified;
+        } finally {
+          // 上传抛异常也必须清除，否则 Rive 同步按钮会永转
+          syncingDiaries.remove(diary.id);
+        }
       }
     }
 
@@ -319,8 +327,13 @@ class WebDavUtil {
       final localMap = {
         for (final r in localRecords) r.id: r.lastModified.toIso8601String()
       };
+      print('[SYNC] usage: local=${localRecords.length} server=${serverSyncData.length}');
 
-      // 服务器侧：处理删除标记 / 本地缺失或较旧的记录下载
+      // 服务器侧：处理删除标记 / 本地缺失或较旧的记录下载。
+      // 限制单次下载量：历史版本用随机 id 累积了海量服务器文件，若一次性
+      // 全量下载会长时间占满主 isolate（卡死）。逐次同步缓慢收敛。
+      var downloaded = 0;
+      const maxDownloadPerSync = 300;
       for (final entry in serverSyncData.entries) {
         final id = entry.key;
         final serverLastModified = entry.value;
@@ -332,6 +345,9 @@ class WebDavUtil {
           }
           continue;
         }
+        if (downloaded >= maxDownloadPerSync) {
+          break;
+        }
         if (localLastModified == null ||
             serverLastModified.compareTo(localLastModified) > 0) {
           try {
@@ -341,6 +357,7 @@ class WebDavUtil {
             final record = UsageRecord.fromJson(
                 jsonDecode(utf8.decode(data)) as Map<String, dynamic>);
             await IsarUtil.putUsageRecords([record]);
+            downloaded++;
             onDownload?.call();
           } catch (e) {
             // 下载失败，移除标记避免反复尝试
@@ -350,6 +367,7 @@ class WebDavUtil {
       }
 
       // 本地侧：服务器缺失或较旧的记录上传
+      var uploaded = 0;
       for (final record in localRecords) {
         final serverLastModified = serverSyncData[record.id];
         final localLastModified = record.lastModified.toIso8601String();
@@ -367,6 +385,7 @@ class WebDavUtil {
                 )
                 .timeout(const Duration(seconds: 15));
             onUpload?.call();
+            uploaded++;
             updatedSyncData[record.id] = localLastModified;
           } catch (e) {
             LogUtil.printInfo('Failed to upload usage record: $e');
@@ -374,6 +393,7 @@ class WebDavUtil {
         }
       }
 
+      print('[SYNC] usage done: downloaded=$downloaded uploaded=$uploaded');
       await updateUsageSyncData(updatedSyncData);
       onComplete?.call();
     } finally {

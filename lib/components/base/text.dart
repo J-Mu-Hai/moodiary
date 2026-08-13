@@ -50,6 +50,12 @@ class AdaptiveText extends StatelessWidget {
           maxLines: 1,
           textScaler: textScaler,
         )..layout(maxWidth: maxWidth ?? constraints.maxWidth);
+        if (textPainter.didExceedMaxLines) {
+          print(
+            '[MARQUEE] AdaptiveText overflow -> marquee textLen=${text.length} '
+            'w=${(maxWidth ?? constraints.maxWidth).toStringAsFixed(0)}',
+          );
+        }
         return textPainter.didExceedMaxLines
             ? SizedBox(
               height: textPainter.height,

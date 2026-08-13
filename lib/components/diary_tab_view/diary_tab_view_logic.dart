@@ -21,16 +21,32 @@ class DiaryTabViewLogic extends GetxController {
 
   Future<void> _getDiary() async {
     state.isFetching.value = true;
-    state.diaryList.value =
-        await IsarUtil.getDiaryByCategory(state.categoryId, 0, state.initLen);
-    state.isFetching.value = false;
+    final sw = Stopwatch()..start();
+    try {
+      state.diaryList.value =
+          await IsarUtil.getDiaryByCategory(state.categoryId, 0, state.initLen);
+      print('[DIARY] loaded=${state.diaryList.length} cat=${state.categoryId} in ${sw.elapsedMilliseconds}ms');
+    } catch (e) {
+      print('[DIARY] ERROR cat=${state.categoryId}: $e');
+    } finally {
+      state.isFetching.value = false;
+      print('[DIARY] isFetching=false cat=${state.categoryId}');
+    }
   }
 
   Future<void> updateDiary() async {
     state.isFetching.value = true;
-    state.diaryList.value =
-        await IsarUtil.getDiaryByCategory(state.categoryId, 0, state.initLen);
-    state.isFetching.value = false;
+    final sw = Stopwatch()..start();
+    try {
+      state.diaryList.value =
+          await IsarUtil.getDiaryByCategory(state.categoryId, 0, state.initLen);
+      print('[DIARY] update loaded=${state.diaryList.length} cat=${state.categoryId} in ${sw.elapsedMilliseconds}ms');
+    } catch (e) {
+      print('[DIARY] update ERROR cat=${state.categoryId}: $e');
+    } finally {
+      state.isFetching.value = false;
+      print('[DIARY] update isFetching=false cat=${state.categoryId}');
+    }
   }
 
   Future<void> paginationDiary() async {

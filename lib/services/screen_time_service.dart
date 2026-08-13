@@ -32,8 +32,10 @@ class ScreenTimeService {
       _startTimer();
       _initLifecycle();
     }
-    // 两端都拉/推一次（PC 拉手机数据，手机传自己数据）
-    unawaited(_sync());
+    // 不再在启动时立即拉/推一次：全新本地库时 `syncUsageRecords` 会在主
+    // isolate 上串行拉取数百条记录，叠加日记同步会让启动期间主线程饱和
+    // （表现为启动卡死/ANR）。数据新鲜度由"页面打开时 refresh"与 Android
+    // 5 分钟定时采集兜底。
   }
 
   void dispose() {
@@ -80,10 +82,13 @@ class ScreenTimeService {
     if (!await isGranted()) return;
     _collecting = true;
     try {
-      final rawList = await _channel.invokeMethod<List<dynamic>>(
+      final rawList = await _channel
+              .invokeMethod<List<dynamic>>(
             'getUsage',
             {'days': days},
-          ) ??
+          )
+              // 原生侧兜底超时：即使原生卡住，Dart 侧也不会无限等待
+              .timeout(const Duration(seconds: 15)) ??
           const [];
       final items = rawList
           .map((e) => Map<String, dynamic>.from(e as Map))
@@ -105,10 +110,13 @@ class ScreenTimeService {
   }
 
   /// 有 WebDAV 配置时同步使用时间记录。
+  /// 带整体超时，防止服务器慢时把 `_syncingUsage` 锁死导致后续同步全部跳过。
   Future<void> _sync() async {
     try {
       if (WebDavUtil().hasOption) {
-        await WebDavUtil().syncUsageRecords();
+        await WebDavUtil()
+            .syncUsageRecords()
+            .timeout(const Duration(seconds: 20), onTimeout: () {});
       }
     } catch (_) {}
   }

@@ -33,6 +33,15 @@ class ScreenTimePage extends StatelessWidget {
       return '${d.month}/${d.day}';
     }
 
+    String fmtTime(DateTime t) {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final d = DateTime(t.year, t.month, t.day);
+      final hm = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+      if (d == today) return '今天 $hm';
+      return '${t.month}/${t.day} $hm';
+    }
+
     // 未授权横幅（仅 Android）
     Widget buildPermissionBanner() {
       return Card.filled(
@@ -89,23 +98,45 @@ class ScreenTimePage extends StatelessWidget {
           color: colorScheme.surfaceContainer,
           child: Padding(
             padding: const EdgeInsets.all(32),
-            child: Center(
-              child: Text(
-                state.loading ? '加载中...' : '暂无使用记录',
-                style: textStyle.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.timer_outlined,
+                  size: 44,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  state.loading ? '加载中...' : '暂无使用记录',
+                  style: textStyle.bodyMedium
+                      ?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
+                if (!state.loading) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '在手机端系统设置中开启"使用情况访问"，点右上角刷新后，'
+                    '这里会按天展示各应用的使用时长。',
+                    textAlign: TextAlign.center,
+                    style: textStyle.bodySmall
+                        ?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ],
             ),
           ),
         );
       }
       final maxMs = state.records.first.foregroundMs;
+      // 兜底：只渲染前 30 条，防止历史累积数据把主线程打爆
+      final displayRecords = state.records.take(30).toList();
       return Card.filled(
         color: colorScheme.surfaceContainer,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              for (final r in state.records) ...[
+              for (final r in displayRecords) ...[
                 Row(
                   children: [
                     Expanded(
@@ -141,7 +172,7 @@ class ScreenTimePage extends StatelessWidget {
         leading: const PageBackButton(),
         actions: [
           IconButton(
-            onPressed: logic.refresh,
+            onPressed: logic.reload,
             icon: const Icon(Icons.refresh_rounded),
             tooltip: '刷新',
           ),
@@ -170,12 +201,26 @@ class ScreenTimePage extends StatelessWidget {
                 }).toList(),
               ),
             ),
+            // 后台采集/同步期间显示细进度条，让用户感知到页面在工作
+            if (state.loading)
+              const LinearProgressIndicator(minHeight: 2),
             buildTotal(),
             if (!Platform.isAndroid)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
                   '数据来自手机端采集，电脑端仅展示与同步',
+                  style: textStyle.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            // 数据新鲜度提示：明确告知数据何时更新，避免"看起来没反应"
+            if (state.loadedAt != null && !state.loading)
+              Padding(
+                padding: const EdgeInsets.only(left: 4, bottom: 8),
+                child: Text(
+                  '数据更新于 ${fmtTime(state.loadedAt!)}',
                   style: textStyle.bodySmall?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                   ),

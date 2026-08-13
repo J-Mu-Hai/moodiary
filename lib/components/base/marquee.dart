@@ -137,9 +137,12 @@ class _MarqueeState extends State<Marquee> with SingleTickerProviderStateMixin {
   bool _running = false;
   int _roundCounter = 0;
 
-  bool get isDone => widget.numberOfRounds == null
-      ? false
-      : widget.numberOfRounds == _roundCounter;
+  /// numberOfRounds 为 null 表示无限循环，但无限滚动会持续产帧、拖垮主线程
+  /// （启动时 hitokoto/标题溢出即触发）。这里给一个安全上限：滚动数轮后停下，
+  /// 既保留"文字溢出滚动提示"的效果，又避免永续动画。
+  static const int _defaultMaxRounds = 5;
+
+  bool get isDone => (widget.numberOfRounds ?? _defaultMaxRounds) == _roundCounter;
 
   @override
   void initState() {
@@ -150,6 +153,9 @@ class _MarqueeState extends State<Marquee> with SingleTickerProviderStateMixin {
         if (_controller.hasClients) {
           _controller.jumpTo(_startPosition);
           await Future<void>.delayed(widget.startAfter);
+          final preview =
+              widget.text.length > 30 ? widget.text.substring(0, 30) : widget.text;
+          print('[MARQUEE] start text="$preview" rounds=${widget.numberOfRounds}');
           Future.doWhile(_scroll);
         }
       }
@@ -274,6 +280,9 @@ class _MarqueeState extends State<Marquee> with SingleTickerProviderStateMixin {
       scrollDirection: widget.scrollAxis,
       reverse: widget.textDirection == TextDirection.rtl,
       physics: const NeverScrollableScrollPhysics(),
+      // 有界 itemCount 兜底：即便 numberOfRounds 意外为 null，
+      // 也不会无界地惰性建项撑爆内存。
+      itemCount: 2000,
       itemBuilder: (_, i) {
         return i.isEven
             ? Text(

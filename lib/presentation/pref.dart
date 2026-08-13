@@ -106,29 +106,42 @@ class PrefUtil {
   };
 
   static Future<void> initPref() async {
+    final _sw = Stopwatch()..start();
+    void _step(String name) {
+      print('[PREF] $_sw $name');
+      _sw.reset();
+    }
+
     _prefs = await SharedPreferencesWithCache.create(
       cacheOptions: SharedPreferencesWithCacheOptions(
         allowList: allowList.toSet(),
       ),
     );
+    _step('SharedPreferencesWithCache.create');
     // 首次启动
     final firstStart = _prefs.getBool('firstStart') ?? true;
     await _prefs.setBool('firstStart', firstStart);
+    _step('firstStart');
 
     // 获取当前应用版本
     final packageInfo = await PackageUtil.getPackageInfo();
+    _step('getPackageInfo');
     final currentVersion = '${packageInfo.version}+${packageInfo.buildNumber}';
     final appVersion = _prefs.getString('appVersion');
     if (appVersion != null) MergeUtil.merge(lastAppVersion: appVersion);
+    _step('merge');
     // 如果是首次启动或版本不一致
     if (kDebugMode ||
         firstStart ||
         appVersion == null ||
         appVersion != currentVersion) {
       await _prefs.setString('appVersion', currentVersion);
+      _step('set appVersion');
       await setDefaultValues();
+      _step('setDefaultValues');
       //初始化所需目录
       await FileUtil.initCreateDir();
+      _step('initCreateDir');
     }
   }
 

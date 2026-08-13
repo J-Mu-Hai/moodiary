@@ -1,5 +1,4 @@
 import 'package:isar/isar.dart';
-import 'package:uuid/uuid.dart';
 
 part 'usage_record.g.dart';
 
@@ -9,9 +8,14 @@ part 'usage_record.g.dart';
 /// WebDAV `/Moodiary/Usage/` 与电脑端互通。电脑端只读展示，不采集。
 @collection
 class UsageRecord {
-  // 业务主键，使用 uuid
+  /// 业务主键：`<日期>-<包名>`，确定性生成。
+  ///
+  /// 关键设计：id 必须由（日期 + 包名）确定性推导，而不是随机 uuid。
+  /// 否则每次重新采集同一天的数据都会生成新 id → 上传到 WebDAV 变成
+  /// 新文件 → 服务器文件无限累积 → 同步越跑越慢直到两端卡死。
+  /// （`usageRecordId` 定义见文件底部。）
   @Index()
-  String id = const Uuid().v7();
+  String id = '';
 
   // 数据库主键，使用 hash 业务主键
   @Id()
@@ -61,6 +65,14 @@ class UsageRecord {
       ..lastModified = DateTime.parse(json['lastModified'] as String);
   }
 }
+
+/// 生成确定性使用记录 id：`2026-08-13_<包名>`。
+///
+/// 同一天同一个应用恒为同一个 id，`put` 会覆盖而不是新增，从源头
+/// 杜绝 WebDAV 服务器文件累积。包名只含 `[a-zA-Z0-9._]`，可安全
+/// 用作文件名。
+String usageRecordId(DateTime date, String packageName) =>
+    '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}_$packageName';
 
 int fastHash(String string) {
   var hash = 0xcbf29ce484222325;

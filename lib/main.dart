@@ -4,6 +4,7 @@ import 'dart:ui';
 
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:flutter_quill/flutter_quill.dart';
@@ -23,6 +24,7 @@ import 'package:moodiary/router/app_routes.dart';
 import 'package:moodiary/services/ai_trigger_service.dart';
 import 'package:moodiary/services/screen_time_service.dart';
 import 'package:moodiary/src/rust/frb_generated.dart';
+import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/log_util.dart';
 import 'package:moodiary/utils/media_util.dart';
 import 'package:moodiary/utils/theme_util.dart';
@@ -37,14 +39,43 @@ late Locale locale;
 
 Future<void> _initSystem() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // ── 临时诊断：启动各步骤耗时（定位启动 CPU 忙转 / ANR）──
+  final _sw = Stopwatch()..start();
+  void _step(String name) {
+    print('[STARTUP] ${_sw.elapsedMilliseconds}ms: $name');
+    _sw.reset();
+  }
+
   await RustLib.init();
+  _step('RustLib.init');
   await PrefUtil.initPref();
+  _step('PrefUtil.initPref');
   // 预填个人默认配置（WebDAV + DeepSeek），仅在对应配置为空时写入
   await DefaultConfig.seed();
+  _step('DefaultConfig.seed');
   await IsarUtil.initIsar();
+  _step('IsarUtil.initIsar');
   await IsarUtil.ensureFixedCategories();
+  _step('ensureFixedCategories');
+  // 诊断：打印数据库文件大小
+  try {
+    final dbDir = Directory(FileUtil.getRealPath('database', ''));
+    if (dbDir.existsSync()) {
+      final sizes = dbDir
+          .listSync()
+          .whereType<File>()
+          .map((f) =>
+              '${f.uri.pathSegments.last}=${(f.statSync().size / 1024 / 1024).toStringAsFixed(1)}MB')
+          .join(', ');
+      print('[DB] files: $sizes');
+    }
+  } catch (e) {
+    print('[DB] size check error: $e');
+  }
   await ThemeUtil().buildTheme();
+  _step('ThemeUtil.buildTheme');
   await WebDavUtil().initWebDav();
+  _step('WebDavUtil.initWebDav');
   VideoPlayerMediaKit.ensureInitialized(
     android: true,
     iOS: true,
@@ -59,11 +90,14 @@ Future<void> _initSystem() async {
     ),
   );
   await _findLanguage();
+  _step('_findLanguage');
   await _platFormOption();
+  _step('_platFormOption');
   // 启动 AI 触发器服务
   AiTriggerService().init();
   // 启动屏幕使用时间服务（Android 采集 + 跨端同步）
   ScreenTimeService().init();
+  _step('services init');
 }
 
 Future<void> _findLanguage() async {
@@ -109,6 +143,16 @@ String _getInitialRoute() {
 
 void main() async {
   await _initSystem();
+  // ── 临时诊断：--dart-define=AUTONAV=/screenTime 启动后自动跳转到指定页面 ──
+  // 仅用于定位「进入使用时间后主线程忙转」问题；release 构建不传该参数即完全禁用。
+  const autoNavRoute = String.fromEnvironment('AUTONAV');
+  if (autoNavRoute.isNotEmpty) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+      print('[AUTONAV] navigating to $autoNavRoute');
+      Get.toNamed(autoNavRoute);
+    });
+  }
   FlutterError.onError = (details) {
     LogUtil.printError(
       'Flutter error',
@@ -121,6 +165,18 @@ void main() async {
     return true;
   };
   final themeData = ThemeUtil().getThemeData();
+  // ── 临时诊断：帧看门狗（每 2 秒报告一次产帧速率，定位持续动画）──
+  final _frameSw = Stopwatch()..start();
+  var _frameCount = 0;
+  SchedulerBinding.instance.addPersistentFrameCallback((_) {
+    _frameCount++;
+    if (_frameSw.elapsedMilliseconds >= 2000) {
+      final secs = _frameSw.elapsedMilliseconds / 1000;
+      print('[FRAMES] ${(_frameCount / secs).toStringAsFixed(1)} fps over ${secs.toStringAsFixed(0)}s');
+      _frameSw.reset();
+      _frameCount = 0;
+    }
+  });
   runApp(
     GetMaterialApp.router(
       routeInformationParser: GetInformationParser.createInformationParser(
