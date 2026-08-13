@@ -13,6 +13,7 @@ import 'package:moodiary/common/models/isar/font.dart';
 import 'package:moodiary/common/models/isar/guide_message.dart';
 import 'package:moodiary/common/models/isar/sync_record.dart';
 import 'package:moodiary/common/models/isar/usage_record.dart';
+import 'package:moodiary/common/models/isar/usage_session.dart';
 import 'package:moodiary/common/models/map.dart';
 import 'package:moodiary/common/values/diary_type.dart';
 import 'package:moodiary/components/quill_embed/audio_embed.dart';
@@ -34,6 +35,7 @@ class IsarUtil {
     ExpenseRecordSchema,
     GuideMessageSchema,
     UsageRecordSchema,
+    UsageSessionSchema,
   ];
 
   static Future<void> initIsar() async {
@@ -722,6 +724,46 @@ class IsarUtil {
   static Future<void> deleteUsageBefore(DateTime before) async {
     await _isar.writeAsync((isar) {
       isar.usageRecords.where().dateLessThan(before).deleteAll();
+    });
+  }
+
+  // ========== 使用会话（时间线 / 监督） ==========
+
+  /// 批量保存使用会话（按业务 id 覆盖，增量拉取时幂等）
+  static Future<void> putUsageSessions(List<UsageSession> sessions) async {
+    if (sessions.isEmpty) return;
+    await _isar.writeAsync((isar) {
+      isar.usageSessions.putAll(sessions);
+    });
+  }
+
+  /// 获取指定日期的使用会话（按开始时刻升序 = 时间线）。
+  ///
+  /// 同一天可能存在"仍在进行中"（end == null）的会话，排在其开始时刻。
+  static Future<List<UsageSession>> getUsageSessionsByDay(String yMd) async {
+    return await _isar.usageSessions
+        .where()
+        .yMdEqualTo(yMd)
+        .sortByStart()
+        .findAllAsync();
+  }
+
+  /// 获取最近一条仍在进行中的会话（end == null），没有则返回 null。
+  ///
+  /// 增量构建时间线时作为"当前前台会话"的起点：它可能早于本次拉取的事件
+  /// 游标，必须从库里取回才能被后续的退出事件正确关闭。
+  static Future<UsageSession?> getMostRecentOpenUsageSession() async {
+    return await _isar.usageSessions
+        .where()
+        .endIsNull()
+        .sortByStartDesc()
+        .findFirstAsync();
+  }
+
+  /// 删除指定时间之前开始的会话（清理过期数据，与 UsageRecord 同节奏）
+  static Future<void> deleteUsageSessionsBefore(DateTime before) async {
+    await _isar.writeAsync((isar) {
+      isar.usageSessions.where().startLessThan(before).deleteAll();
     });
   }
 }

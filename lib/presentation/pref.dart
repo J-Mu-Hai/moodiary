@@ -103,6 +103,10 @@ class PrefUtil {
     'customExpenseCategories',
     // 隐藏导航栏图标（桌面端）
     'hideNavigatorIcons',
+    // 持续监督开关（屏幕使用时间）
+    'usageMonitorEnabled',
+    // 使用会话增量拉取游标（记录上次消费到的事件时刻）
+    'usageSessionCursor',
   };
 
   static Future<void> initPref() async {

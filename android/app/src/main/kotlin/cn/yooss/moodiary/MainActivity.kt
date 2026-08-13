@@ -1,6 +1,7 @@
 package cn.yooss.moodiary
 
 import android.app.AppOpsManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStats
 import android.app.usage.UsageStatsManager
 import android.content.Context
@@ -60,6 +61,41 @@ class MainActivity : FlutterFragmentActivity() {
                             runOnUiThread { result.error("USAGE_ERROR", e.message, null) }
                         }
                     }.start()
+                }
+                "getEventsSince" -> {
+                    // 增量拉取使用事件流（时间线/会话的地基）。
+                    // 同样放后台线程，避免 queryEvents 阻塞主线程。
+                    val since = call.argument<Long>("since") ?: 0L
+                    Thread {
+                        try {
+                            val out = getEventsSince(since)
+                            runOnUiThread { result.success(out) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("USAGE_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
+                "getAppLabel" -> {
+                    val pkg = call.argument<String>("packageName") ?: ""
+                    Thread {
+                        try {
+                            val label = getAppLabel(pkg)
+                            runOnUiThread { result.success(label) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("USAGE_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
+                "startMonitor" -> {
+                    UsageMonitorService.start(this)
+                    result.success(null)
+                }
+                "stopMonitor" -> {
+                    UsageMonitorService.stop(this)
+                    result.success(null)
+                }
+                "isMonitorRunning" -> {
+                    result.success(UsageMonitorService.running)
                 }
                 else -> result.notImplemented()
             }
@@ -147,6 +183,55 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
         return out
+    }
+
+    /**
+     * 增量拉取 [since]（毫秒）之后的使用事件流。
+     *
+     * 返回 List<Map>: { t: 事件时刻(ms), pkg: 包名, type: UsageEvents 事件类型 }
+     * 只保留与"前台使用"相关的事件：进入/退出前台、熄屏、锁屏。
+     * 事件本身按时间升序，Dart 侧据此把事件配对成一段段 UsageSession。
+     *
+     * queryEvents 适合增量拉取（事件只保留最近一段时间），调用方应把返回
+     * 的最大事件时刻存下来作为下次的 [since]，避免重复处理。
+     */
+    private fun getEventsSince(since: Long): ArrayList<Map<String, Any>> {
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val out = ArrayList<Map<String, Any>>()
+        val now = System.currentTimeMillis()
+        val events = usm.queryEvents(since, now)
+        val e = UsageEvents.Event()
+        while (events.hasNextEvent()) {
+            events.getNextEvent(e)
+            if (e.timeStamp <= since) continue
+            val type = e.eventType
+            when (type) {
+                UsageEvents.Event.ACTIVITY_RESUMED,
+                UsageEvents.Event.ACTIVITY_PAUSED,
+                UsageEvents.Event.SCREEN_NON_INTERACTIVE,
+                UsageEvents.Event.SCREEN_INTERACTIVE,
+                UsageEvents.Event.KEYGUARD_SHOWN,
+                UsageEvents.Event.KEYGUARD_HIDDEN -> {
+                    out.add(
+                        mapOf(
+                            "t" to e.timeStamp,
+                            "pkg" to e.packageName,
+                            "type" to type
+                        )
+                    )
+                }
+            }
+        }
+        return out
+    }
+
+    /** 解析单个应用名；解析失败兜底为包名。 */
+    private fun getAppLabel(pkg: String): String {
+        return try {
+            packageManager.getApplicationInfo(pkg, 0).loadLabel(packageManager).toString()
+        } catch (e: Exception) {
+            pkg
+        }
     }
 
     private fun getOAID(resultCallback: MethodChannel.Result) {

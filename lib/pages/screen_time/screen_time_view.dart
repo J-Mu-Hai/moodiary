@@ -1,11 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:moodiary/common/models/isar/usage_session.dart';
 import 'package:moodiary/common/values/border.dart';
 import 'package:moodiary/components/base/button.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'screen_time_logic.dart';
+import 'screen_time_state.dart';
 
 class ScreenTimePage extends StatelessWidget {
   const ScreenTimePage({super.key});
@@ -25,6 +27,9 @@ class ScreenTimePage extends StatelessWidget {
       return '${m}分钟';
     }
 
+    String fmtHM(DateTime t) =>
+        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
     String dayLabel(DateTime d) {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
@@ -37,7 +42,7 @@ class ScreenTimePage extends StatelessWidget {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final d = DateTime(t.year, t.month, t.day);
-      final hm = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+      final hm = fmtHM(t);
       if (d == today) return '今天 $hm';
       return '${t.month}/${t.day} $hm';
     }
@@ -64,6 +69,49 @@ class ScreenTimePage extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      );
+    }
+
+    // 持续监督开关（仅 Android）
+    Widget buildMonitorCard() {
+      return Card.filled(
+        color: colorScheme.surfaceContainer,
+        child: SwitchListTile(
+          value: state.monitoringEnabled,
+          onChanged: state.monitorBusy ? null : (_) => logic.toggleMonitoring(),
+          secondary: Icon(Icons.radar, color: colorScheme.primary),
+          title: const Text('持续监督'),
+          subtitle: Text(
+            state.monitoringEnabled
+                ? '开启中：每分钟采集一次，退出应用后仍持续'
+                : '关闭：仅在打开应用时采集（每 5 分钟）',
+            style: textStyle.bodySmall,
+          ),
+        ),
+      );
+    }
+
+    // 总览 / 时间线切换
+    Widget buildViewSwitcher() {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: SegmentedButton<UsageViewMode>(
+          segments: const [
+            ButtonSegment(
+              value: UsageViewMode.overview,
+              icon: Icon(Icons.pie_chart_outline),
+              label: Text('总览'),
+            ),
+            ButtonSegment(
+              value: UsageViewMode.timeline,
+              icon: Icon(Icons.timeline),
+              label: Text('时间线'),
+            ),
+          ],
+          selected: {state.viewMode},
+          onSelectionChanged: (s) => logic.selectView(s.first),
+          showSelectedIcon: false,
         ),
       );
     }
@@ -166,6 +214,123 @@ class ScreenTimePage extends StatelessWidget {
       );
     }
 
+    // 单条会话（时间段 + 应用 + 时长）
+    Widget buildSessionRow(UsageSession s) {
+      final endLabel = s.isOpen ? '现在' : fmtHM(s.end!);
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 96,
+              child: Text(
+                '${fmtHM(s.start)}\n$endLabel',
+                style: textStyle.bodyMedium
+                    ?.copyWith(color: colorScheme.onSurfaceVariant),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: s.isOpen
+                    ? colorScheme.error
+                    : colorScheme.primary,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      s.appName.isEmpty ? s.packageName : s.appName,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (s.isOpen) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: colorScheme.errorContainer,
+                        borderRadius: AppBorderRadius.smallBorderRadius,
+                      ),
+                      child: Text(
+                        '进行中',
+                        style: textStyle.labelSmall
+                            ?.copyWith(color: colorScheme.onErrorContainer),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              fmtDuration(s.durationMs),
+              style: textStyle.bodyMedium?.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 时间线：按时间段还原"什么时间段用了什么应用"
+    Widget buildTimeline() {
+      if (state.sessions.isEmpty) {
+        return Card.filled(
+          color: colorScheme.surfaceContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.timeline,
+                  size: 44,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  state.loading ? '加载中...' : '暂无时间线记录',
+                  style: textStyle.bodyMedium
+                      ?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
+                if (!state.loading) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '打开"持续监督"后，这里会按时间段展示每个应用的使用情况；'
+                    '红点表示该应用当前正在使用。',
+                    textAlign: TextAlign.center,
+                    style: textStyle.bodySmall
+                        ?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      }
+      return Card.filled(
+        color: colorScheme.surfaceContainer,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Column(
+            children: [
+              for (final (i, s) in state.sessions.indexed) ...[
+                if (i > 0)
+                  Divider(height: 1, color: colorScheme.surfaceContainerHighest),
+                buildSessionRow(s),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('使用时间'),
@@ -201,20 +366,13 @@ class ScreenTimePage extends StatelessWidget {
                 }).toList(),
               ),
             ),
+            // 持续监督开关（仅手机端）
+            if (Platform.isAndroid) buildMonitorCard(),
+            // 总览 / 时间线切换
+            buildViewSwitcher(),
             // 后台采集/同步期间显示细进度条，让用户感知到页面在工作
             if (state.loading)
               const LinearProgressIndicator(minHeight: 2),
-            buildTotal(),
-            if (!Platform.isAndroid)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  '数据来自手机端采集，电脑端仅展示与同步',
-                  style: textStyle.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
             // 数据新鲜度提示：明确告知数据何时更新，避免"看起来没反应"
             if (state.loadedAt != null && !state.loading)
               Padding(
@@ -226,7 +384,21 @@ class ScreenTimePage extends StatelessWidget {
                   ),
                 ),
               ),
-            buildRecords(),
+            if (state.viewMode == UsageViewMode.overview) ...[
+              buildTotal(),
+              if (!Platform.isAndroid)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    '数据来自手机端采集，电脑端仅展示与同步',
+                    style: textStyle.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              buildRecords(),
+            ] else
+              buildTimeline(),
           ],
         );
       }),

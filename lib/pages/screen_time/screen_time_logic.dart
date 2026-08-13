@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/services/screen_time_service.dart';
 import 'package:moodiary/utils/webdav_util.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'screen_time_state.dart';
@@ -16,6 +18,7 @@ class ScreenTimeLogic extends GetxController {
   @override
   void onReady() async {
     super.onReady();
+    state.monitoringEnabled = ScreenTimeService().monitoringEnabled;
     try {
       await reload();
     } catch (e, s) {
@@ -23,6 +26,7 @@ class ScreenTimeLogic extends GetxController {
       print('[ScreenTime] onReady error: $e\n$s');
       state.loading = false;
       state.records = [];
+      state.sessions = [];
       update();
     }
   }
@@ -106,6 +110,45 @@ class ScreenTimeLogic extends GetxController {
       state.lastError = '$e';
       print('[ScreenTime] loadDay error: $e\n$s');
     }
+    try {
+      state.sessions =
+          await IsarUtil.getUsageSessionsByDay(dayKey(state.selectedDate));
+    } catch (e, s) {
+      state.sessions = [];
+      state.lastError = '$e';
+      print('[ScreenTime] loadSessions error: $e\n$s');
+    }
+  }
+
+  /// 切换视图（总览 / 时间线）
+  void selectView(UsageViewMode mode) {
+    state.viewMode = mode;
+    update();
+  }
+
+  /// 切换"持续监督"开关：开启时请求通知权限（Android 13+ 显示常驻通知），
+  /// 并让服务启动原生前台服务 + 分钟级轮询。
+  Future<void> toggleMonitoring() async {
+    if (state.monitorBusy) return;
+    final enable = !state.monitoringEnabled;
+    state.monitorBusy = true;
+    update();
+    try {
+      if (enable && Platform.isAndroid) {
+        // 未授予也只是隐藏通知，前台服务仍可运行，故不强制
+        await Permission.notification.request();
+      }
+      await ScreenTimeService().setMonitoringEnabled(enable);
+      state.monitoringEnabled = enable;
+    } catch (e) {
+      print('[ScreenTime] toggleMonitoring error: $e');
+    } finally {
+      state.monitorBusy = false;
+      update();
+    }
+    // 开关变化后刷新一次本地时间线
+    await _loadDay();
+    update();
   }
 
   List<DateTime> _buildRecentDays() {
