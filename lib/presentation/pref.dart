@@ -241,9 +241,12 @@ class PrefUtil {
       'monthlyBudget',
       _prefs.getInt('monthlyBudget') ?? 0,
     );
-    await _prefs.setStringList(
+    // 自定义支出分类以 JSON 字符串存储（见 expense_categories.dart），
+    // 这里不能用 setStringList —— 会把 String 当 List 读导致 cast 崩溃、
+    // 启动即卡死。与其存的是 JSON 字符串，用 setString 原样保留即可。
+    await _prefs.setString(
       'customExpenseCategories',
-      _prefs.getStringList('customExpenseCategories') ?? [],
+      _prefs.getString('customExpenseCategories') ?? '',
     );
     await _prefs.setBool(
       'hideNavigatorIcons',

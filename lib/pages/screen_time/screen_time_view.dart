@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:moodiary/common/models/isar/usage_session.dart';
 import 'package:moodiary/common/values/border.dart';
 import 'package:moodiary/components/base/button.dart';
+import 'package:moodiary/utils/session_merger.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'screen_time_logic.dart';
@@ -314,13 +315,15 @@ class ScreenTimePage extends StatelessWidget {
           ),
         );
       }
+      // 显示层合并相邻同应用碎片（纯函数，不改动本地数据）
+      final display = mergeAdjacentSessions(state.sessions);
       return Card.filled(
         color: colorScheme.surfaceContainer,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Column(
             children: [
-              for (final (i, s) in state.sessions.indexed) ...[
+              for (final (i, s) in display.indexed) ...[
                 if (i > 0)
                   Divider(height: 1, color: colorScheme.surfaceContainerHighest),
                 buildSessionRow(s),

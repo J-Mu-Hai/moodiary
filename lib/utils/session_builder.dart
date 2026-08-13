@@ -32,7 +32,8 @@ class UsageEventType {
   UsageSession? current = initialOpen;
   final closed = <UsageSession>[];
 
-  for (final raw in rawEvents) {
+  for (var i = 0; i < rawEvents.length; i++) {
+    final raw = rawEvents[i];
     final tRaw = raw['t'];
     final typeRaw = raw['type'];
     final pkg = raw['pkg'] as String? ?? '';
@@ -54,7 +55,15 @@ class UsageEventType {
         ..appName = ''
         ..lastModified = now;
     } else if (current != null && current.packageName == pkg) {
-      // PAUSE / 熄屏 / 锁屏：闭合当前前台态
+      // PAUSE / 熄屏 / 锁屏。
+      // 熄屏（screenNonInteractive）一定是真结束：屏幕关了使用必然中断。
+      // PAUSE / 锁屏 则可能是"同应用内部 activity 切换"或"拉通知栏后立刻回来"，
+      // 若紧接着的下一个有效事件是同包 RESUME，说明前台从未真正离开该应用，
+      // 忽略这次退出 —— 否则一段连续使用会被切成一条条一两分钟的碎片。
+      final isScreenOff = type == UsageEventType.screenNonInteractive;
+      final transient =
+          !isScreenOff && _isTransientIntraAppPause(rawEvents, i, pkg);
+      if (transient) continue;
       _close(current, t, now);
       closed.add(current);
       current = null;
@@ -63,6 +72,30 @@ class UsageEventType {
   }
 
   return (closed: closed, open: current);
+}
+
+/// 从事件 [i] 之后向前看：若下一个"有效事件"是同包 RESUME，则这次 PAUSE 只是
+/// 同应用内部页面切换（A 页面 → B 页面），前台并未真正离开，返回 true。
+/// 有效事件 = RESUME / 熄屏 / 锁屏；其余（连续 PAUSE、KEYGUARD_HIDDEN、
+/// SCREEN_INTERACTIVE 等）跳过继续向前看，直到遇到 RESUME 或真退出事件。
+bool _isTransientIntraAppPause(
+  List<Map<String, dynamic>> rawEvents,
+  int i,
+  String pkg,
+) {
+  for (var j = i + 1; j < rawEvents.length; j++) {
+    final e = rawEvents[j];
+    final typeRaw = e['type'];
+    final nextPkg = e['pkg'] as String? ?? '';
+    if (typeRaw is! num || nextPkg.isEmpty) continue;
+    final type = typeRaw.toInt();
+    if (type == UsageEventType.activityResumed) return nextPkg == pkg;
+    if (type == UsageEventType.screenNonInteractive ||
+        type == UsageEventType.keyguardShown) {
+      return false; // 真的离开前台了（熄屏/锁屏），不是瞬时切换
+    }
+  }
+  return false; // 事件流结束仍无同包 RESUME，按真退出处理
 }
 
 void _close(UsageSession s, DateTime end, DateTime now) {
