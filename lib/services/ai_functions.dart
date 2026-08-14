@@ -1,8 +1,7 @@
-import 'dart:convert';
-
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:moodiary/common/models/isar/category.dart';
 import 'package:moodiary/presentation/isar.dart';
+import 'package:moodiary/utils/environment_sensor.dart';
+import 'package:moodiary/utils/tts_speaker.dart';
 
 /// AI 函数调用返回的封装
 class AiFunctionResult {
@@ -44,6 +43,10 @@ class AiFunctionSystem {
           return await _getCategories();
         case 'getUniversalValues':
           return await _getUniversalValues(params['topic']);
+        case 'env_snapshot':
+          return await _getEnvSnapshot();
+        case 'speak':
+          return await _speak(params['text']);
         default:
           return null;
       }
@@ -86,7 +89,7 @@ class AiFunctionSystem {
         final snippet = d['snippet'].toString();
         return '[${d['date']}$mood] ${title.isNotEmpty ? title : '(无标题)'} — ${snippet.substring(0, snippet.length.clamp(0, 60))}';
       }).toList();
-      summary = '近期的日记：\n' + lines.join('\n');
+      summary = '近期的日记：\n${lines.join('\n')}';
     }
 
     return AiFunctionResult(
@@ -281,7 +284,7 @@ class AiFunctionSystem {
     void flush() {
       if (currentTitle != null) {
         sections.add((
-          title: currentTitle!,
+          title: currentTitle,
           content: currentBody.join('\n').trim(),
         ));
       }
@@ -338,5 +341,44 @@ class AiFunctionSystem {
         .take(2)
         .map((e) => e.section)
         .toList();
+  }
+
+  /// 7. 环境快照：用户当前城市 + 实时天气（IP 定位，零权限）
+  static Future<AiFunctionResult> _getEnvSnapshot() async {
+    final snap = await EnvironmentSensor.getSnapshot();
+    if (snap == null) {
+      return AiFunctionResult(
+        functionName: 'env_snapshot',
+        data: null,
+        summary: '无法获取当前位置与天气（可能是网络或 key 配置问题）。',
+      );
+    }
+    final p = snap['province'].toString();
+    final c = snap['city'].toString();
+    final d = snap['district'].toString();
+    final city = '$p${(c.isNotEmpty && !p.contains(c) ? c : '')}$d';
+    return AiFunctionResult(
+      functionName: 'env_snapshot',
+      data: snap,
+      summary: '用户当前在$city，天气${snap['weather']}，${snap['temp']}℃，'
+          '体感${snap['feelsLike']}℃，${snap['windDir']}。',
+    );
+  }
+
+  /// 8. 语音朗读：把指定文本合成语音并播放
+  static Future<AiFunctionResult> _speak(String? text) async {
+    if (text == null || text.trim().isEmpty) {
+      return AiFunctionResult(
+        functionName: 'speak',
+        data: null,
+        summary: '未提供朗读文本。',
+      );
+    }
+    final ok = await TtsSpeaker.speak(text);
+    return AiFunctionResult(
+      functionName: 'speak',
+      data: {'ok': ok, 'text': text},
+      summary: ok ? '已朗读：$text' : '语音朗读失败。',
+    );
   }
 }

@@ -30,6 +30,20 @@ class DefaultConfig {
   static const String deepSeekModel = 'deepseek-v4-flash';
   static const int deepSeekMaxTokens = 4096;
 
+  // ── 环境感知与语音（构建注入，默认空）──
+  // 和风天气 key（实时天气 + 城市查询），也会预填进 PrefUtil 供现有天气模块复用
+  static const String qweatherKey =
+      String.fromEnvironment('MOODIARY_QWEATHER_KEY');
+  // 腾讯位置服务 IP 定位 key（城市级定位，零权限）
+  static const String tencentIpKey =
+      String.fromEnvironment('MOODIARY_TENCENT_IP_KEY');
+  // 豆包语音合成 key（文本转语音）
+  static const String doubaoTtsKey =
+      String.fromEnvironment('MOODIARY_DOUBAO_TTS_KEY');
+  // 天地图 key（地图/地理编码等地理服务），也会预填进 PrefUtil 供现有设置复用
+  static const String tiandituKey =
+      String.fromEnvironment('MOODIARY_TIANDITU_KEY');
+
   /// 启动时预填默认配置：WebDAV 三件套 + DeepSeek provider。
   ///
   /// 仅在对应配置为空时才写入，不覆盖用户已有的配置。
@@ -64,6 +78,20 @@ class DefaultConfig {
         jsonEncode([config.toJson()]),
       );
       await PrefUtil.setValue<String>('aiCurrentProviderId', config.id);
+    }
+
+    // 3. 和风天气 key：未配置且构建时注入了才预填（环境感知/侧边栏天气复用）
+    final existingQweatherKey = PrefUtil.getValue<String>('qweatherKey');
+    if ((existingQweatherKey == null || existingQweatherKey.isEmpty) &&
+        qweatherKey.isNotEmpty) {
+      await PrefUtil.setValue<String>('qweatherKey', qweatherKey);
+    }
+
+    // 4. 天地图 key：未配置且构建时注入了才预填
+    final existingTiandituKey = PrefUtil.getValue<String>('tiandituKey');
+    if ((existingTiandituKey == null || existingTiandituKey.isEmpty) &&
+        tiandituKey.isNotEmpty) {
+      await PrefUtil.setValue<String>('tiandituKey', tiandituKey);
     }
   }
 }

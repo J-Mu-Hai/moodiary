@@ -15,7 +15,7 @@ DEFINES=()
 if [ -f "$ROOT/.env.local" ]; then
   while IFS='=' read -r _key _val; do
     case "$_key" in
-      MOODIARY_*) DEFINES+=("-d$_key=$_val") ;;
+      MOODIARY_*) DEFINES+=("--dart-define=$_key=$_val") ;;
     esac
   done < "$ROOT/.env.local"
 fi

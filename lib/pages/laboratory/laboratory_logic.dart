@@ -5,8 +5,10 @@ import 'dart:io';
 import 'package:moodiary/common/models/ai_provider.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/utils/aes_util.dart';
+import 'package:moodiary/utils/environment_sensor.dart';
 import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/notice_util.dart';
+import 'package:moodiary/utils/tts_speaker.dart';
 import 'package:refreshed/refreshed.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -109,5 +111,34 @@ class LaboratoryLogic extends GetxController {
     final encrypted = await AesUtil.encrypt(key: key, data: 'Hello World');
     final decrypted = await AesUtil.decrypt(key: key, encryptedData: encrypted);
     return decrypted == 'Hello World';
+  }
+
+  // ─── 环境感知 + 语音播报（演示） ─────────────────────
+
+  /// 获取环境快照 → 生成播报句 → 豆包 TTS 合成并播放
+  Future<void> environmentBroadcast() async {
+    NoticeUtil.showToast('正在获取环境…');
+    try {
+      final snap = await EnvironmentSensor.getSnapshot();
+      if (snap == null) {
+        NoticeUtil.showToast('环境获取失败：请检查网络或 key 配置');
+        return;
+      }
+      final p = snap['province'].toString();
+      final c = snap['city'].toString();
+      final d = snap['district'].toString();
+      final city = '$p${(c.isNotEmpty && !p.contains(c) ? c : '')}$d';
+      final weather = snap['weather'].toString();
+      final temp = snap['temp'].toString();
+      final sentence = weather.isNotEmpty
+          ? '你现在在$city，天气$weather，$temp 摄氏度。'
+          : '你现在在$city。';
+      NoticeUtil.showToast('正在合成语音…');
+      final ok = await TtsSpeaker.speak(sentence);
+      NoticeUtil.showToast(
+          ok ? '播放完成' : '语音播放失败: ${TtsSpeaker.lastError}');
+    } catch (e) {
+      NoticeUtil.showToast('环境播报失败：$e');
+    }
   }
 }

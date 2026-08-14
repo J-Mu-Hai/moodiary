@@ -56,7 +56,7 @@ class LaboratoryPage extends StatelessWidget {
     if (isNew) {
       await logic.addProvider(config);
     } else {
-      await logic.updateProvider(existing!.id, config);
+      await logic.updateProvider(existing.id, config);
     }
   }
 
@@ -188,6 +188,13 @@ class LaboratoryPage extends StatelessWidget {
                 }
               },
               title: const Text('加密测试'),
+            ),
+            const Divider(),
+            ListTile(
+              onTap: () => logic.environmentBroadcast(),
+              leading: const Icon(Icons.graphic_eq),
+              title: const Text('环境播报'),
+              subtitle: const Text('测试环境感知+语音：播报当前所在城市与天气'),
             ),
           ],
         );

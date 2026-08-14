@@ -10,7 +10,6 @@ import 'package:moodiary/components/base/button.dart';
 import 'package:moodiary/components/bubble/bubble_view.dart';
 import 'package:moodiary/main.dart';
 import 'package:moodiary/utils/file_util.dart';
-import 'package:moodiary/utils/http_util.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'map_logic.dart';
@@ -43,25 +42,25 @@ class MapPage extends StatelessWidget {
                 children: [
                   TileLayer(
                     urlTemplate:
-                        'http://t6.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${state.tiandituKey}',
+                        'https://t6.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${state.tiandituKey}',
                     tileProvider: CachedTileProvider(
                       store: HiveCacheStore(
                         FileUtil.getRealPath('hive_cache', ''),
                         hiveBoxName: 'HiveCache',
                       ),
-                      dio: HttpUtil().dio,
+                      dio: state.tileDio,
                     ),
                     tileSize: 256,
                   ),
                   TileLayer(
                     urlTemplate:
-                        'http://t6.tianditu.gov.cn/cva_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cva&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${state.tiandituKey}',
+                        'https://t6.tianditu.gov.cn/cva_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cva&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${state.tiandituKey}',
                     tileProvider: CachedTileProvider(
                       store: HiveCacheStore(
                         FileUtil.getRealPath('hive_cache', ''),
                         hiveBoxName: 'HiveCache',
                       ),
-                      dio: HttpUtil().dio,
+                      dio: state.tileDio,
                     ),
                     tileSize: 256,
                   ),
