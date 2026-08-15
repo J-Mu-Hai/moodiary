@@ -10,7 +10,23 @@ import 'notice_util.dart';
 class HttpUtil {
   Dio? _dio;
 
+  /// 静默模式：后台感知（大脑组装上下文、天气轮询等）的网络失败
+  /// 不弹「Network Error」toast，避免一次大脑决策刷出一串提示。
+  /// 用 [withQuiet] 包裹，使用完自动复位。
+  static bool quiet = false;
+
   final bool _enableLogging = kDebugMode;
+
+  /// 在 [action] 执行期间开启静默模式，结束（含异常）后复位。
+  static Future<T> withQuiet<T>(Future<T> Function() action) async {
+    final prev = quiet;
+    quiet = true;
+    try {
+      return await action();
+    } finally {
+      quiet = prev;
+    }
+  }
 
   Dio get dio {
     if (_dio == null) {
@@ -18,7 +34,7 @@ class HttpUtil {
       _dio?.interceptors.add(
         InterceptorsWrapper(
           onError: (error, handler) {
-            if (error.type != DioExceptionType.cancel) {
+            if (error.type != DioExceptionType.cancel && !quiet) {
               NoticeUtil.showToast('Network Error ${error.error}');
             }
             handler.next(error);

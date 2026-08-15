@@ -107,6 +107,19 @@ class PrefUtil {
     'usageMonitorEnabled',
     // 使用会话增量拉取游标（记录上次消费到的事件时刻）
     'usageSessionCursor',
+    // 用户画像（记忆层，MemoryService）
+    'userMemory',
+    // 智能体大脑：任务库 / 用户规则 / 信号监测基线与冷却（见 agent_brain/*）
+    'agentTasks',
+    'agentRules',
+    'brainLastWeather',
+    'brainLastDiaryTs',
+    'brainLastUsageProfile',
+    'brainCooldowns',
+    // 大脑最近一次决策的输入/输出（实验室监督面板）
+    'brainLastDecision',
+    // 日记「是否被 AI 读过」侧表（diary_ai_read.dart）
+    'diaryAiRead',
   };
 
   static Future<void> initPref() async {

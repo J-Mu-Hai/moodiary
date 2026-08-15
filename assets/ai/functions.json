@@ -61,5 +61,15 @@
       {"name": "text", "type": "string", "required": true, "description": "要朗读的文本内容"}
     ],
     "result": "播放成功或失败"
+  },
+  {
+    "name": "get_usage_timeline",
+    "description": "获取某天的应用使用时间线（按时间段列出用户用了哪些应用、各多长时间，如 08:00~08:45 微信）。用于还原用户一天的生活节奏、判断什么时间段在做什么、是否在用手机",
+    "params": [
+      {"name": "date", "type": "string", "format": "YYYY-MM-DD", "required": false, "description": "指定日期，默认今天"},
+      {"name": "startHour", "type": "string", "required": false, "description": "起始小时(0-23)，过滤该时段之后"},
+      {"name": "endHour", "type": "string", "required": false, "description": "结束小时(0-23)，过滤该时段之前"}
+    ],
+    "result": "[{start, end, app, durationMs}]  start/end 为 HH:MM，end 为 null 表示仍在进行"
   }
 ]

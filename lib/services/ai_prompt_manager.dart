@@ -64,6 +64,7 @@ class AiPromptManager {
       'weekly_review': 'weekly_review.txt',
       'idle_care': 'idle_chat.txt',
       'task_analysis': 'task_analyze.txt',
+      'memory_consolidation': 'memory_consolidate.txt',
     }[triggerId];
 
     if (promptFile == null) return '';

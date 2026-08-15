@@ -38,5 +38,15 @@
     "priority": "normal",
     "requiredData": ["getTaskAnalysis"],
     "promptFile": "task_analyze.txt"
+  },
+  {
+    "id": "memory_consolidation",
+    "name": "画像沉淀",
+    "description": "每晚回顾当天记录，把新认知沉淀进用户画像",
+    "schedule": {"type": "time", "hour": 23, "minute": 30},
+    "cooldownHours": 23,
+    "priority": "gentle",
+    "requiredData": [],
+    "promptFile": "memory_consolidate.txt"
   }
 ]

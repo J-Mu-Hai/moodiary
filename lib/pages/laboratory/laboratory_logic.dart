@@ -4,6 +4,11 @@ import 'dart:io';
 
 import 'package:moodiary/common/models/ai_provider.dart';
 import 'package:moodiary/presentation/pref.dart';
+import 'package:moodiary/services/agent_brain/agent_brain.dart';
+import 'package:moodiary/services/agent_brain/agent_executor.dart';
+import 'package:moodiary/services/agent_brain/agent_rule.dart';
+import 'package:moodiary/services/agent_brain/agent_task.dart';
+import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/utils/aes_util.dart';
 import 'package:moodiary/utils/environment_sensor.dart';
 import 'package:moodiary/utils/file_util.dart';
@@ -113,6 +118,21 @@ class LaboratoryLogic extends GetxController {
     return decrypted == 'Hello World';
   }
 
+  // ─── 用户画像沉淀（阶段 1 记忆层演示） ────────────────
+
+  /// 立即执行一次画像沉淀（不等 23:30 定时），返回沉淀摘要
+  Future<String> consolidateMemory() async {
+    NoticeUtil.showToast('正在沉淀用户画像…');
+    try {
+      final summary = await MemoryService.consolidate();
+      NoticeUtil.showToast('沉淀完成');
+      return summary;
+    } catch (e) {
+      NoticeUtil.showToast('沉淀失败: $e');
+      return '沉淀失败: $e';
+    }
+  }
+
   // ─── 环境感知 + 语音播报（演示） ─────────────────────
 
   /// 获取环境快照 → 生成播报句 → 豆包 TTS 合成并播放
@@ -140,5 +160,99 @@ class LaboratoryLogic extends GetxController {
     } catch (e) {
       NoticeUtil.showToast('环境播报失败：$e');
     }
+  }
+
+  // ─── 智能体大脑（阶段 3：触发→规划→执行→反馈闭环） ─────────
+
+  /// 加载进行中的任务（pending / running / waitingUser），供实验室可视化。
+  Future<List<AgentTask>> loadActiveTasks() async {
+    final pending = await AgentTaskStore.query(status: 'pending');
+    final running = await AgentTaskStore.query(status: 'running');
+    final waiting = await AgentTaskStore.query(status: 'waitingUser');
+    return [...pending, ...running, ...waiting];
+  }
+
+  /// 手动触发一类信号（force 跳过冷却），返回大脑决策结果。
+  Future<String> triggerBrainSignal(String type) async {
+    final signals = <String, BrainSignal>{
+      'weather_changed': BrainSignal(
+        type: 'weather_changed',
+        summary: '【手动测试】模拟地点/天气变化信号。',
+        data: {'manual': true},
+      ),
+      'diary_stable': BrainSignal(
+        type: 'diary_stable',
+        summary: '【手动测试】模拟日记信息变化稳定信号（近 3 天未读日记会被分析）。',
+        data: {'manual': true},
+      ),
+      'usage_category_changed': BrainSignal(
+        type: 'usage_category_changed',
+        summary: '【手动测试】模拟手机 App 使用类别变化信号。',
+        data: {'manual': true},
+      ),
+      'profile_uninitialized': BrainSignal(
+        type: 'profile_uninitialized',
+        summary: '【手动测试】模拟用户画像未初始化信号。',
+        data: {'manual': true},
+      ),
+      'profile_incomplete': BrainSignal(
+        type: 'profile_incomplete',
+        summary: '【手动测试】模拟画像缺基础认知信号（还不知道姓名/年龄/身份）。',
+        data: {'manual': true},
+      ),
+      'longterm_overdue': BrainSignal(
+        type: 'longterm_overdue',
+        summary: '【手动测试】模拟长期计划到期回访信号。',
+        data: {'manual': true},
+      ),
+    };
+    final signal = signals[type];
+    if (signal == null) return '未知信号类型: $type';
+    return await AgentBrain.handleSignal(signal, force: true);
+  }
+
+  /// 最近一次大脑决策的输入/输出（脑 IO 监督面板读取）。
+  Future<Map<String, dynamic>?> getLastBrainDecision() async {
+    final s = PrefUtil.getValue<String>('brainLastDecision');
+    if (s == null || s.isEmpty) return null;
+    try {
+      return jsonDecode(s) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 添加一条用户规则并送入大脑分析，返回大脑生成的规划结果。
+  Future<String> addRule(String rule) async {
+    await AgentRuleStore.add(rule);
+    return await AgentBrain.handleSignal(
+      BrainSignal(
+        type: 'user_rule',
+        summary: '用户新增自定义规则：$rule',
+        data: {'rule': rule},
+      ),
+      force: true,
+    );
+  }
+
+  Future<void> removeRule(String rule) async {
+    await AgentRuleStore.remove(rule);
+  }
+
+  Future<List<String>> loadRules() => AgentRuleStore.load();
+
+  /// 手动执行一个任务（实验室直接跑执行器，不等到点轮询）。
+  Future<String> executeTask(AgentTask task) async {
+    task.status = 'running';
+    await AgentTaskStore.update(task);
+    await AgentExecutor.execute(task);
+    return '已执行';
+  }
+
+  /// 取消一个任务。
+  Future<void> cancelTask(AgentTask task) async {
+    task.status = 'cancelled';
+    task.feedback = [...task.feedback, '[实验室] 用户取消'];
+    await AgentTaskStore.update(task);
   }
 }

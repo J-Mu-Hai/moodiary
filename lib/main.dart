@@ -22,6 +22,7 @@ import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/router/app_pages.dart';
 import 'package:moodiary/router/app_routes.dart';
 import 'package:moodiary/services/ai_trigger_service.dart';
+import 'package:moodiary/services/agent_brain/brain_service.dart';
 import 'package:moodiary/services/screen_time_service.dart';
 import 'package:moodiary/src/rust/frb_generated.dart';
 import 'package:moodiary/utils/file_util.dart';
@@ -95,6 +96,8 @@ Future<void> _initSystem() async {
   _step('_platFormOption');
   // 启动 AI 触发器服务
   AiTriggerService().init();
+  // 启动智能体大脑服务（任务轮询 + 代码监督信号）
+  BrainService().init();
   // 启动屏幕使用时间服务（Android 采集 + 跨端同步）
   ScreenTimeService().init();
   _step('services init');

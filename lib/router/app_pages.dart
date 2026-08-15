@@ -12,6 +12,7 @@ import 'package:moodiary/pages/assistant/assistant_logic.dart';
 import 'package:moodiary/pages/assistant/assistant_view.dart';
 import 'package:moodiary/pages/backup_sync/backup_sync_logic.dart';
 import 'package:moodiary/pages/backup_sync/backup_sync_view.dart';
+import 'package:moodiary/pages/brain/block_screen_page.dart';
 import 'package:moodiary/pages/category_manager/category_manager_logic.dart';
 import 'package:moodiary/pages/category_manager/category_manager_view.dart';
 import 'package:moodiary/pages/diary_details/diary_details_view.dart';
@@ -186,6 +187,12 @@ class AppPages {
       name: AppRoutes.screenTimePage,
       page: () => const ScreenTimePage(),
       binds: [Bind.lazyPut(fenix: true, () => ScreenTimeLogic())],
+    ),
+    //智能体全屏阻断页（强制锁屏，App 内）
+    MoodiaryGetPage(
+      name: AppRoutes.blockScreenPage,
+      page: () => const BlockScreenPage(),
+      useFade: true,
     ),
   ];
 }

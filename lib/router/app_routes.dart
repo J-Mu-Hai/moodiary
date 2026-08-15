@@ -75,4 +75,7 @@ abstract class AppRoutes {
 
   //使用时间（屏幕时间监控）
   static const screenTimePage = '/screenTime';
+
+  //智能体全屏阻断页（强制锁屏，App 内）
+  static const blockScreenPage = '/blockScreen';
 }

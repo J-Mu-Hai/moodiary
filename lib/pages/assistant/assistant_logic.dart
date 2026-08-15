@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,6 +11,8 @@ import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/ai_functions.dart';
 import 'package:moodiary/services/ai_prompt_manager.dart';
+import 'package:moodiary/services/agent_brain/agent_brain.dart';
+import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/services/reply_chunker.dart';
 import 'package:moodiary/services/typing_pacer.dart';
 import 'package:moodiary/utils/file_util.dart';
@@ -463,10 +466,32 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
       update();
       toBottom();
 
+      // 智能体任务闭环：若有等待用户回应的任务，把这条消息作为反馈交给大脑。
+      // 后台处理，不阻塞正常对话（不 double 串行等 AI 决策）。
+      try {
+        unawaited(AgentBrain.processWaitingUserFeedback(ask));
+      } catch (e) {
+        print('[AgentBrain] 反馈处理失败: $e');
+      }
+
       // 构建发送给 AI 的消息列表（连续同角色合并）
       List<AIMessage> chatMessages = _coalesceMessages(state.messages
           .map((m) => AIMessage(role: m.role, content: m.content))
           .toList());
+
+      // 注入长期认知画像（每次请求都新鲜注入，因为画像会随时间更新；
+      // 不放进 _systemPrompt 缓存，否则永远不会刷新）。
+      try {
+        final profile = await MemoryService.getProfile();
+        if (profile.isNotEmpty) {
+          chatMessages.insert(0, AIMessage(
+            role: 'system',
+            content: '【关于用户的长期认知画像】\n$profile',
+          ));
+        }
+      } catch (e) {
+        print('[Memory Profile Error] $e');
+      }
 
       // 注入 AI 性格系统提示词（每个对话只注入一次）
       if (!_systemInjected) {

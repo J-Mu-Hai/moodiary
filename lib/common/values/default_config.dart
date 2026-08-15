@@ -61,10 +61,12 @@ class DefaultConfig {
       );
     }
 
-    // 2. AI Provider：没有任何 provider 且注入了 DeepSeek key 才预填
+    // 2. AI Provider：无 provider 且注入了 DeepSeek key 才预填；
+    //    已有默认 provider 但注入的 key/baseUrl/model 变化（.env.local 轮换）
+    //    → 同步更新。否则旧 key 会一直留在手机上，构建注入的新 key 被忽略，
+    //    旧 key 失效后所有 AI 调用都 401。
     final providersJson = PrefUtil.getValue<String>('aiProviders');
-    if ((providersJson == null || providersJson.isEmpty) &&
-        deepSeekApiKey.isNotEmpty) {
+    if (deepSeekApiKey.isNotEmpty) {
       final config = AIProviderConfig(
         id: 'provider_default_deepseek',
         displayName: 'DeepSeek',
@@ -73,11 +75,56 @@ class DefaultConfig {
         model: deepSeekModel,
         maxTokens: deepSeekMaxTokens,
       );
-      await PrefUtil.setValue<String>(
-        'aiProviders',
-        jsonEncode([config.toJson()]),
-      );
-      await PrefUtil.setValue<String>('aiCurrentProviderId', config.id);
+      final list = <AIProviderConfig>[];
+      if (providersJson != null && providersJson.isNotEmpty) {
+        try {
+          for (final e in jsonDecode(providersJson) as List) {
+            list.add(AIProviderConfig.fromJson(e as Map<String, dynamic>));
+          }
+        } catch (e) {
+          print('[DefaultConfig] 解析 aiProviders 失败: $e');
+        }
+      }
+      var changed = false;
+      final idx = list.indexWhere((c) => c.id == config.id);
+      if (idx < 0) {
+        list.add(config);
+        changed = true;
+      } else if (list[idx].apiKey != config.apiKey ||
+          list[idx].baseUrl != config.baseUrl ||
+          list[idx].model != config.model) {
+        list[idx] = config;
+        changed = true;
+      }
+      if (changed) {
+        await PrefUtil.setValue<String>(
+          'aiProviders',
+          jsonEncode(list.map((e) => e.toJson()).toList()),
+        );
+      }
+      // 当前选中的 provider：
+      //   - 为空 / 指向不存在 → 归位到默认
+      //   - 与默认 DeepSeek 同源（同 baseUrl）但 key 不是注入的最新 key
+      //     → 说明是旧 key 残留的手动重复项，key 已失效（401），也归位到默认
+      //   - 用户手动选的其它服务商（不同 baseUrl）→ 尊重，保留
+      final currentId = PrefUtil.getValue<String>('aiCurrentProviderId') ?? '';
+      AIProviderConfig? currentCfg;
+      for (final c in list) {
+        if (c.id == currentId) {
+          currentCfg = c;
+          break;
+        }
+      }
+      final sameOriginStale = currentCfg != null &&
+          currentCfg.id != config.id &&
+          currentCfg.baseUrl == config.baseUrl &&
+          currentCfg.apiKey != config.apiKey;
+      if (currentCfg == null || sameOriginStale) {
+        await PrefUtil.setValue<String>('aiCurrentProviderId', config.id);
+      }
+      // 诊断：打印实际生效的 provider 列表（key 脱敏），便于从日志排查 401
+      print('[DefaultConfig] AI providers='
+          '${list.map((c) => '${c.id}:${_maskKey(c.apiKey)}').join(' | ')}');
     }
 
     // 3. 和风天气 key：未配置且构建时注入了才预填（环境感知/侧边栏天气复用）
@@ -94,4 +141,9 @@ class DefaultConfig {
       await PrefUtil.setValue<String>('tiandituKey', tiandituKey);
     }
   }
+
+  /// 脱敏 key：只显示前 8 位与长度，日志可安全携带。
+  static String _maskKey(String key) => key.isEmpty
+      ? '(空)'
+      : '${key.length > 8 ? key.substring(0, 8) : key}…(${key.length})';
 }

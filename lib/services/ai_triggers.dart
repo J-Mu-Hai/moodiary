@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:moodiary/services/ai_functions.dart';
 import 'package:moodiary/services/ai_prompt_manager.dart';
+import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/services/output_splitter.dart';
 
 /// 触发器优先级
@@ -114,6 +115,15 @@ class TriggerEngine {
           requiredData: ['getDiaryByDateRange'],
           promptFile: 'idle_chat.txt',
         ),
+        TriggerDef(
+          id: 'memory_consolidation',
+          name: '画像沉淀',
+          description: '每晚回顾当天记录，把新认知沉淀进用户画像',
+          cooldownHours: 23,
+          priority: TriggerPriority.gentle,
+          requiredData: [],
+          promptFile: 'memory_consolidate.txt',
+        ),
       ];
 
   static String _userMessageForTrigger(String triggerId) {
@@ -148,6 +158,23 @@ class TriggerEngine {
     final trigger = _triggers.where((t) => t.id == triggerId).firstOrNull;
     if (trigger == null) return null;
 
+    // 画像沉淀：走 MemoryService 专用流程（静默，不产生对话气泡）。
+    if (triggerId == 'memory_consolidation') {
+      String summary;
+      try {
+        summary = await MemoryService.consolidate();
+      } catch (e) {
+        summary = '画像沉淀失败: $e';
+      }
+      print('[MemoryConsolidation] $summary');
+      _cooldowns[triggerId] = DateTime.now();
+      return TriggerResult(
+        triggerId: triggerId,
+        messages: const [], // 沉淀是后台动作，不打扰用户
+        triggeredAt: DateTime.now(),
+      );
+    }
+
     // 1. 收集数据
     final data = <String, String>{};
     for (final fnName in trigger.requiredData) {
@@ -159,18 +186,22 @@ class TriggerEngine {
     }
     if (extraData != null) data.addAll(extraData);
 
-    // 2. 构建 system prompt
+    // 2. 构建 system prompt（注入长期认知画像，让主动行为「带着记忆」）
     final systemPrompt = await _promptManager.buildSystemPrompt(
       triggerId: triggerId,
       triggerData: data,
     );
+    final profile = await MemoryService.getProfile();
+    final promptWithProfile = profile.isEmpty
+        ? systemPrompt
+        : '$systemPrompt\n\n【关于用户的长期认知画像】\n$profile';
 
     // 3. 调用 AI 生成（通过回调执行，由外部注入 provider）
     if (onGenerate == null) return null;
 
     // 根据触发器类型生成不同的用户提示
     final userMsg = _userMessageForTrigger(triggerId);
-    final fullContent = await onGenerate!(systemPrompt, userMsg);
+    final fullContent = await onGenerate!(promptWithProfile, userMsg);
     if (fullContent == null || fullContent.isEmpty) return null;
 
     // 4. 拆句

@@ -334,6 +334,167 @@ class ScreenTimePage extends StatelessWidget {
       );
     }
 
+    // 画像类别 → 颜色（直观区分沉淀的认知类型）
+    Color categoryColor(String cat) {
+      switch (cat) {
+        case '生活习惯':
+          return Colors.blue;
+        case '情绪状态':
+          return Colors.deepOrange;
+        case '偏好与习惯':
+          return Colors.purple;
+        case '目标与痛点':
+          return Colors.teal;
+        case '人际关系':
+          return Colors.pink;
+        case '行为规律':
+          return Colors.green;
+        default:
+          return colorScheme.primary;
+      }
+    }
+
+    // 用户画像面板：直接观察智能体沉淀的长期认知（阶段 1/2 记忆层可视化）
+    Widget buildProfilePanel() {
+      final data = state.memoryData;
+      return Card.filled(
+        color: colorScheme.surfaceContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.psychology, color: colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text('用户画像', style: textStyle.titleMedium),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: state.memoryLoading ? null : logic.loadMemory,
+                    icon: const Icon(Icons.refresh_rounded, size: 20),
+                    tooltip: '刷新画像',
+                  ),
+                  IconButton(
+                    onPressed: state.memoryLoading
+                        ? null
+                        : () async {
+                            final summary = await logic.consolidateMemory();
+                            if (!context.mounted) return;
+                            await showDialog<void>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('画像沉淀结果'),
+                                content: SelectionArea(
+                                  child: Text(summary,
+                                      style: const TextStyle(fontSize: 13)),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.of(ctx).pop(),
+                                    child: const Text('好的'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                    icon: const Icon(Icons.auto_awesome, size: 20),
+                    tooltip: '立即沉淀',
+                  ),
+                ],
+              ),
+              if (data != null) ...[
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    '版本 v${data.profileVersion} · 更新于 ${fmtTime(data.updatedAt)}',
+                    style: textStyle.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                if (data.aspects.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Center(
+                      child: Text(
+                        '暂无画像。\n写几篇日记后点右上角自动图标立即沉淀。',
+                        textAlign: TextAlign.center,
+                        style: textStyle.bodyMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      itemCount: data.aspects.length,
+                      itemBuilder: (_, i) {
+                        final aspect = data.aspects[i];
+                        final catMatch =
+                            RegExp(r'^\[([^\]]+)\]').firstMatch(aspect);
+                        final cat = catMatch?.group(1) ?? '';
+                        final content = catMatch == null
+                            ? aspect
+                            : aspect.substring(catMatch.end).trimLeft();
+                        final catColor = categoryColor(cat);
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 3),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (cat.isNotEmpty)
+                                Container(
+                                  margin: const EdgeInsets.only(top: 1),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: catColor.withValues(alpha: 0.15),
+                                    borderRadius:
+                                        AppBorderRadius.smallBorderRadius,
+                                  ),
+                                  child: Text(
+                                    cat,
+                                    style: textStyle.labelSmall
+                                        ?.copyWith(color: catColor),
+                                  ),
+                                ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(content,
+                                    style: textStyle.bodyMedium),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ] else if (state.memoryLoading)
+                const Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Center(
+                    child: Text(
+                      '画像读取失败',
+                      style: textStyle.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('使用时间'),
@@ -347,63 +508,90 @@ class ScreenTimePage extends StatelessWidget {
         ],
       ),
       body: GetBuilder<ScreenTimeLogic>(builder: (_) {
-        return ListView(
-          padding: const EdgeInsets.all(8),
-          children: [
-            if (Platform.isAndroid && !state.granted) buildPermissionBanner(),
-            // 日期选择
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: state.recentDays.map((d) {
-                  final selected = d == state.selectedDate;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: ChoiceChip(
-                      label: Text(dayLabel(d)),
-                      selected: selected,
-                      onSelected: (_) => logic.selectDate(d),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-            // 持续监督开关（仅手机端）
-            if (Platform.isAndroid) buildMonitorCard(),
-            // 总览 / 时间线切换
-            buildViewSwitcher(),
-            // 后台采集/同步期间显示细进度条，让用户感知到页面在工作
-            if (state.loading)
-              const LinearProgressIndicator(minHeight: 2),
-            // 数据新鲜度提示：明确告知数据何时更新，避免"看起来没反应"
-            if (state.loadedAt != null && !state.loading)
-              Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 8),
-                child: Text(
-                  '数据更新于 ${fmtTime(state.loadedAt!)}',
-                  style: textStyle.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
+        return LayoutBuilder(builder: (context, constraints) {
+          // 宽屏（电脑/平板横屏）左右分栏：使用时间 | 用户画像
+          final wide = constraints.maxWidth >= 720;
+          final usageList = ListView(
+            padding: const EdgeInsets.all(8),
+            children: [
+              if (Platform.isAndroid && !state.granted) buildPermissionBanner(),
+              // 日期选择
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: state.recentDays.map((d) {
+                    final selected = d == state.selectedDate;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: ChoiceChip(
+                        label: Text(dayLabel(d)),
+                        selected: selected,
+                        onSelected: (_) => logic.selectDate(d),
+                      ),
+                    );
+                  }).toList(),
                 ),
               ),
-            if (state.viewMode == UsageViewMode.overview) ...[
-              buildTotal(),
-              if (!Platform.isAndroid)
+              // 持续监督开关（仅手机端）
+              if (Platform.isAndroid) buildMonitorCard(),
+              // 总览 / 时间线切换
+              buildViewSwitcher(),
+              // 后台采集/同步期间显示细进度条，让用户感知到页面在工作
+              if (state.loading)
+                const LinearProgressIndicator(minHeight: 2),
+              // 数据新鲜度提示：明确告知数据何时更新，避免"看起来没反应"
+              if (state.loadedAt != null && !state.loading)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.only(left: 4, bottom: 8),
                   child: Text(
-                    '数据来自手机端采集，电脑端仅展示与同步',
+                    '数据更新于 ${fmtTime(state.loadedAt!)}',
                     style: textStyle.bodySmall?.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
-              buildRecords(),
-            ] else
-              buildTimeline(),
-          ],
-        );
+              if (state.viewMode == UsageViewMode.overview) ...[
+                buildTotal(),
+                if (!Platform.isAndroid)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      '数据来自手机端采集，电脑端仅展示与同步',
+                      style: textStyle.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                buildRecords(),
+              ] else
+                buildTimeline(),
+            ],
+          );
+          final profilePanel = buildProfilePanel();
+
+          if (wide) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: usageList),
+                VerticalDivider(width: 1, color: colorScheme.outlineVariant),
+                SizedBox(width: 360, child: profilePanel),
+              ],
+            );
+          }
+          // 窄屏（手机竖屏）：使用时间在上，画像在下
+          return Column(
+            children: [
+              Expanded(child: usageList),
+              Divider(height: 1, color: colorScheme.outlineVariant),
+              SizedBox(
+                height: constraints.maxHeight * 0.42,
+                child: profilePanel,
+              ),
+            ],
+          );
+        });
       }),
     );
   }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:moodiary/presentation/isar.dart';
+import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/services/screen_time_service.dart';
 import 'package:moodiary/utils/webdav_util.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -29,6 +30,7 @@ class ScreenTimeLogic extends GetxController {
       state.sessions = [];
       update();
     }
+    unawaited(loadMemory());
   }
 
   /// 刷新：先读本地数据立即展示，再把采集/网络同步放到后台（带超时），
@@ -157,5 +159,35 @@ class ScreenTimeLogic extends GetxController {
       final d = now.subtract(Duration(days: 6 - i));
       return DateTime(d.year, d.month, d.day);
     });
+  }
+
+  // ─── 用户画像（智能体记忆层可视化） ─────────────────────
+
+  /// 读取当前用户画像（无则 memoryData 为 null）
+  Future<void> loadMemory() async {
+    state.memoryLoading = true;
+    update();
+    try {
+      state.memoryData = await MemoryService.load();
+    } catch (e) {
+      state.memoryData = null;
+      print('[ScreenTime] loadMemory error: $e');
+    }
+    state.memoryLoading = false;
+    update();
+  }
+
+  /// 立即沉淀一次画像，成功后刷新显示；返回结果摘要
+  Future<String> consolidateMemory() async {
+    state.memoryLoading = true;
+    update();
+    String summary;
+    try {
+      summary = await MemoryService.consolidate();
+    } catch (e) {
+      summary = '沉淀失败: $e';
+    }
+    await loadMemory();
+    return summary;
   }
 }

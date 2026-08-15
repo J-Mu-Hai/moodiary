@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:moodiary/pages/assistant/assistant_logic.dart';
 import 'package:moodiary/common/models/ai_provider.dart';
@@ -58,6 +57,12 @@ class AiTriggerService {
           now.weekday == DateTime.sunday &&
           now.hour == 21 &&
           now.minute == 0) {
+        await _fireAndShow(trigger.id);
+      }
+      // 画像沉淀：深夜 23:30 后台执行（静默，不注入对话）
+      if (trigger.id == 'memory_consolidation' &&
+          now.hour == 23 &&
+          now.minute == 30) {
         await _fireAndShow(trigger.id);
       }
     }

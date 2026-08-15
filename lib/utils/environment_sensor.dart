@@ -10,7 +10,14 @@ import 'package:moodiary/utils/http_util.dart';
 /// 返回结构化快照，供智能体函数 `env_snapshot` 与环境播报使用。
 class EnvironmentSensor {
   /// 获取环境快照。失败返回 null。
+  ///
+  /// 全程静默（HttpUtil 静默模式）：这是后台感知，网络/密钥失败不该
+  /// 弹「Network Error」toast 打扰用户——调用方自行处理 null。
   static Future<Map<String, dynamic>?> getSnapshot() async {
+    return HttpUtil.withQuiet(_fetch);
+  }
+
+  static Future<Map<String, dynamic>?> _fetch() async {
     Map<String, dynamic>? ipInfo;
     try {
       // ① 腾讯位置服务 IP 定位 → 省/市/区 + 经纬度（不传 ip 参数=用出口 IP）

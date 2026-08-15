@@ -19,16 +19,24 @@ class AiProviderManager {
 
     final currentId = PrefUtil.getValue<String>('aiCurrentProviderId') ?? '';
 
-    // 优先用当前 ID，否则用第一个
+    // 优先用当前 ID；否则回退到默认 DeepSeek provider（构建注入 key 的那个）。
+    // 不能用 configs.first 兜底：手动加的旧 provider 可能排在最前，
+    // 会在没显式选择时被静默顶成当前，导致 key 过期 401。
+    AIProviderConfig? defaultCfg;
+    for (final c in configs) {
+      if (c.id == 'provider_default_deepseek') {
+        defaultCfg = c;
+        break;
+      }
+    }
     AIProviderConfig targetConfig;
     if (currentId.isNotEmpty) {
       targetConfig = configs.cast<AIProviderConfig?>().firstWhere(
             (c) => c!.id == currentId,
-            orElse: () => configs.first,
+            orElse: () => defaultCfg ?? configs.first,
           )!;
     } else {
-      // 没设置过 ID，自动选第一个并保存
-      targetConfig = configs.first;
+      targetConfig = defaultCfg ?? configs.first;
       PrefUtil.setValue<String>('aiCurrentProviderId', targetConfig.id);
     }
 

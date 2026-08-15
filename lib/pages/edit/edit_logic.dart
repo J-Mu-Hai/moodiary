@@ -25,6 +25,7 @@ import 'package:moodiary/main.dart';
 import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/router/app_routes.dart';
+import 'package:moodiary/services/agent_brain/brain_service.dart';
 import 'package:moodiary/services/ai_provider_manager.dart';
 import 'package:moodiary/services/reply_chunker.dart';
 import 'package:moodiary/services/task_advisor.dart';
@@ -1014,6 +1015,8 @@ class EditLogic extends GetxController {
       oldDiary: state.originalDiary,
       newDiary: state.currentDiary,
     );
+    // 通知智能体：日记已写入（触发「信息稳定」信号的地基）
+    unawaited(BrainService().notifyDiaryWritten());
     state.isNew
         ? Get.back(result: state.currentDiary.categoryId ?? '')
         : Get.back(result: 'changed');

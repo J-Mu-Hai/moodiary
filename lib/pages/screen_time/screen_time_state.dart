@@ -1,5 +1,6 @@
 import 'package:moodiary/common/models/isar/usage_record.dart';
 import 'package:moodiary/common/models/isar/usage_session.dart';
+import 'package:moodiary/services/memory_service.dart';
 
 /// 使用时间页的两种视图
 enum UsageViewMode {
@@ -44,6 +45,12 @@ class ScreenTimeState {
   // 本地查询错误（静默处理，仅用于诊断，不打扰用户）
   String? lastError;
 
+  // 用户长期画像（智能体记忆层：可直接观察沉淀效果）
+  UserMemoryData? memoryData;
+
+  // 画像加载/沉淀中
+  bool memoryLoading = false;
+
   ScreenTimeState() {
     final now = DateTime.now();
     granted = false;
@@ -54,6 +61,7 @@ class ScreenTimeState {
     viewMode = UsageViewMode.overview;
     monitoringEnabled = false;
     monitorBusy = false;
+    memoryLoading = false;
     selectedDate = DateTime(now.year, now.month, now.day);
   }
 }

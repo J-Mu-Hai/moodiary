@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/utils/environment_sensor.dart';
+import 'package:moodiary/utils/session_merger.dart';
 import 'package:moodiary/utils/tts_speaker.dart';
 
 /// AI 函数调用返回的封装
@@ -47,6 +48,9 @@ class AiFunctionSystem {
           return await _getEnvSnapshot();
         case 'speak':
           return await _speak(params['text']);
+        case 'get_usage_timeline':
+          return await _getUsageTimeline(
+              params['date'], params['startHour'], params['endHour']);
         default:
           return null;
       }
@@ -379,6 +383,71 @@ class AiFunctionSystem {
       functionName: 'speak',
       data: {'ok': ok, 'text': text},
       summary: ok ? '已朗读：$text' : '语音朗读失败。',
+    );
+  }
+
+  /// 9. 获取某天的应用使用时间线：按时间段列出用户用了哪些应用、各多久。
+  ///
+  /// 这是阶段 2「行为认知」的函数地基：喂给模型可还原用户一天的生活节奏
+  /// （什么时间段在做什么、是否用手机）。参数 date 可选（默认今天），
+  /// startHour/endHour 可选（0-23，过滤时段）。
+  static Future<AiFunctionResult> _getUsageTimeline(
+      String? dateStr, String? startHour, String? endHour) async {
+    final date = (dateStr != null && dateStr.trim().isNotEmpty)
+        ? DateTime.tryParse(dateStr) ?? DateTime.now()
+        : DateTime.now();
+    final day = DateTime(date.year, date.month, date.day);
+    final yMd = '${day.year}/${day.month}/${day.day}';
+
+    final sessions = await IsarUtil.getUsageSessionsByDay(yMd);
+    final fromH = int.tryParse(startHour ?? '');
+    final toH = int.tryParse(endHour ?? '');
+    var filtered = sessions;
+    if (fromH != null) {
+      filtered = filtered.where((s) => s.start.hour >= fromH).toList();
+    }
+    if (toH != null) {
+      filtered = filtered.where((s) => (s.end ?? s.start).hour <= toH).toList();
+    }
+
+    // 显示层合并相邻同应用碎片（纯函数），还原"连续一段"的使用
+    final merged = mergeAdjacentSessions(filtered);
+
+    String fmtHM(DateTime t) =>
+        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    String fmtDuration(int ms) {
+      final minutes = (ms / 60000).round();
+      if (minutes < 1) return '<1分钟';
+      if (minutes < 60) return '$minutes分钟';
+      return '${minutes ~/ 60}小时${minutes % 60}分钟';
+    }
+
+    final list = merged.map((s) {
+      final end = s.isOpen ? null : fmtHM(s.end!);
+      return {
+        'start': fmtHM(s.start),
+        'end': end,
+        'app': s.appName.isEmpty ? s.packageName : s.appName,
+        'durationMs': s.durationMs,
+      };
+    }).toList();
+
+    String summary;
+    if (list.isEmpty) {
+      summary = '$yMd 没有使用时间线记录（持续监督未开启，或该日无手机使用数据）。';
+    } else {
+      final total = list.fold<int>(0, (sum, m) => sum + (m['durationMs'] as int));
+      final lines = list.map((m) {
+        final end = m['end'] ?? '现在';
+        return '- ${m['start']}~$end ${m['app']}（${fmtDuration(m['durationMs'] as int)}）';
+      }).join('\n');
+      summary = '$yMd 的使用时间线（共约${fmtDuration(total)}）：\n$lines';
+    }
+
+    return AiFunctionResult(
+      functionName: 'get_usage_timeline',
+      data: list,
+      summary: summary,
     );
   }
 }
