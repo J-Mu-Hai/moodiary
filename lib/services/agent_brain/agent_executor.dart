@@ -1,10 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:moodiary/common/models/ai_provider.dart';
+import 'package:moodiary/common/models/isar/diary.dart';
 import 'package:moodiary/pages/assistant/assistant_logic.dart';
+import 'package:moodiary/pages/diary_details/diary_details_logic.dart';
+import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/router/app_routes.dart';
 import 'package:moodiary/services/ai_provider_manager.dart';
 import 'package:moodiary/services/memory_service.dart';
+import 'package:moodiary/utils/agent_channel.dart';
+import 'package:moodiary/utils/notice_util.dart';
 import 'package:moodiary/utils/tts_speaker.dart';
 import 'package:refreshed/refreshed.dart';
 
@@ -14,7 +20,8 @@ import 'diary_ai_read.dart';
 /// 智能体执行器 — 把任务按 action 分发到具体能力上。
 ///
 /// 5 类能力：tts（语音提示）/ start_chat（发起会话）/ ask_user（提问等回应）/
-/// block_screen（App 内全屏阻断）/ update_profile（沉淀画像）。
+/// block_screen（全屏阻断，有悬浮窗权限则系统级覆盖所有应用，否则回退 App 内）/
+/// update_profile（沉淀画像）。
 ///
 /// 执行后按动作类型写终态：一次性动作置 done；需要用户回应的置 waitingUser；
 /// 阻断页置 running（由阻断页在结束/提前结束时写回反馈与终态）。
@@ -40,6 +47,9 @@ class AgentExecutor {
           break;
         case 'analyze_diaries':
           await _execAnalyzeDiaries(task);
+          break;
+        case 'open_diary':
+          await _execOpenDiary(task);
           break;
       }
       final after = await AgentTaskStore.byId(task.id);
@@ -91,9 +101,36 @@ class AgentExecutor {
       return;
     }
 
+    // 已有等待回应的会话时，不再重复发起（防大脑连发多个 start_chat 骚扰）
+    final waiting = await AgentTaskStore.query(status: 'waitingUser');
+    if (waiting.any((t) =>
+        t.id != task.id &&
+        (t.action == 'start_chat' || t.action == 'ask_user'))) {
+      task.status = 'done';
+      task.feedback = [...task.feedback, '[执行] 已有等待回应的会话，跳过重复发起'];
+      await AgentTaskStore.update(task);
+      return;
+    }
+
+    // ── 让「发起会话」真的抵达用户：语音提醒 → 回前台 → 切对话页 → 注入 ──
+    // 之前只在助手页「未打开」时才走这套流程；助手页一旦开过（fenix 注册常驻
+    // 栈中），后续任务全部变成静默注入，用户完全感知不到 → 已修复为每次执行。
+
+    // 1. 语音提醒：仅当蓝牙耳机连接时播报开场白（耳机在 = 用户能私密听到，
+    //    公开场合不会外放尴尬）；无耳机则跳过语音，直接切对话页。
+    //    先播报再切页，让用户先「听见」这次主动接触。
+    if (await AgentChannel.isBluetoothHeadset()) {
+      final speech = ask && question.isNotEmpty ? question : text;
+      await TtsSpeaker.speak(speech);
+    }
+
+    // 2. 把 App 带回前台（后台定时任务触发时唤起，Android 12+ 有 FGS 保活时可用）
+    await AgentChannel.bringToFront();
+
+    // 3. 切到助手页并注入开场白
     var injected = false;
-    // 助手页已打开：直接把消息注入对话
-    if (Get.isRegistered<AssistantLogic>()) {
+    if (Get.currentRoute == AppRoutes.assistantPage) {
+      // 用户此刻就在对话页：直接注入，不重复跳转
       try {
         final logic = Get.find<AssistantLogic>();
         logic.state.messages.add(AIMessage(role: 'assistant', content: content));
@@ -104,7 +141,7 @@ class AgentExecutor {
       }
     }
     if (!injected) {
-      // 助手页未打开：跳转过去，页面建立后再注入开场白
+      // 未在对话页：跳转过去，页面建立后再注入开场白
       Get.toNamed(AppRoutes.assistantPage);
       await Future<void>.delayed(const Duration(milliseconds: 700));
       try {
@@ -131,18 +168,38 @@ class AgentExecutor {
   }
 
   static Future<void> _execBlockScreen(AgentTask task) async {
+    // 已有进行中的阻断页时不重复开页（多任务并发时避免叠两个锁屏）
+    final running =
+        await AgentTaskStore.query(status: 'running', action: 'block_screen');
+    if (running.any((t) => t.id != task.id)) {
+      task.status = 'done';
+      task.feedback = [...task.feedback, '[执行] 已有阻断页进行中，跳过重复开页'];
+      await AgentTaskStore.update(task);
+      return;
+    }
     final duration = (task.params['durationMinutes'] as num?)?.toInt() ?? 15;
+    // force 默认 true（强制锁屏：不可提前结束、拦截返回）；false 保留「提前结束」按钮
+    final force = task.params['force'] as bool? ?? true;
+    // 系统级悬浮窗：有权限则真·全屏锁屏（覆盖所有应用/拦截 Home 手势）；
+    // 无权限则回退 App 内锁屏，并引导一次性授权
+    final overlay = force && await AgentChannel.hasOverlayPermission();
+    if (force && !overlay) {
+      NoticeUtil.showToast('请授权「悬浮窗」权限以启用系统级强制锁屏');
+      await AgentChannel.requestOverlayPermission();
+    }
     Get.toNamed(AppRoutes.blockScreenPage, arguments: {
       'taskId': task.id,
       'title': task.params['title']?.toString() ?? task.title,
       'reason': task.params['reason']?.toString() ?? '',
       'durationMinutes': duration,
+      'force': force,
+      'overlay': overlay,
     });
     // 阻断页在结束/提前结束时写回反馈与终态；此处置 running 表示进行中
     task.status = 'running';
     task.feedback = [
       ...task.feedback,
-      '[执行] 已打开阻断页（$duration 分钟）',
+      '[执行] 已打开阻断页（$duration 分钟${force ? '，强制' : ''}）',
     ];
     await AgentTaskStore.update(task);
   }
@@ -152,6 +209,76 @@ class AgentExecutor {
     task.status = 'done';
     task.feedback = [...task.feedback, '[执行] 画像沉淀：$summary'];
     await AgentTaskStore.update(task);
+  }
+
+  /// 定位并打开一篇指定日记（智能体「控制软件进入某个日记」能力）。
+  ///
+  /// params：date=yyyy-M-d 按天查；query=标题/内容关键词（支持"今天/昨天"归一化）；
+  /// 都不给则打开最近一篇。找到后先把 App 带回前台，再按 map_logic 的导航模式
+  /// （Bind.lazyPut tag=diary.id + Get.toNamed diaryPage）进入日记页。
+  static Future<void> _execOpenDiary(AgentTask task) async {
+    final diary = await _resolveDiary(task.params);
+    if (diary == null) {
+      task.status = 'done';
+      task.feedback = [...task.feedback, '[执行] 未找到匹配日记'];
+      await AgentTaskStore.update(task);
+      return;
+    }
+
+    final title = diary.title.isEmpty ? '(无标题)' : diary.title;
+    try {
+      await AgentChannel.bringToFront();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      Bind.lazyPut(() => DiaryDetailsLogic(), tag: diary.id);
+      // 不 await 路由：任务应立即完成，等用户看完关页会阻塞后续派发
+      unawaited(Get.toNamed(
+        AppRoutes.diaryPage,
+        arguments: [diary.clone(), false],
+      ));
+    } catch (e) {
+      task.status = 'done';
+      task.feedback = [...task.feedback, '[执行] 打开日记失败: $e'];
+      await AgentTaskStore.update(task);
+      return;
+    }
+
+    task.status = 'done';
+    task.feedback = [...task.feedback, '[执行] 已打开日记《$title》'];
+    await AgentTaskStore.update(task);
+  }
+
+  /// 按 params 解析目标日记：date → 当天第一篇；query（含今天/昨天归一化）→
+  /// 关键词搜索第一条；都没有 → 最近一篇。
+  static Future<Diary?> _resolveDiary(Map<String, dynamic> params) async {
+    final now = DateTime.now();
+
+    final dateStr = params['date']?.toString().trim() ?? '';
+    if (dateStr.isNotEmpty) {
+      final dt = DateTime.tryParse(dateStr);
+      if (dt != null) {
+        final day = await IsarUtil.getDiaryByDay(dt);
+        if (day.isNotEmpty) return day.first;
+      }
+    }
+
+    final query = params['query']?.toString().trim() ?? '';
+    if (query.isNotEmpty) {
+      if (query == '今天' || query == '今日') {
+        final day = await IsarUtil.getDiaryByDay(now);
+        if (day.isNotEmpty) return day.first;
+      } else if (query == '昨天' || query == '昨日') {
+        final day = await IsarUtil.getDiaryByDay(
+            now.subtract(const Duration(days: 1)));
+        if (day.isNotEmpty) return day.first;
+      } else {
+        final hits = await IsarUtil.searchDiaries(query);
+        if (hits.isNotEmpty) return hits.first;
+      }
+    }
+
+    final all = await IsarUtil.getAllDiariesSorted();
+    if (all.isNotEmpty) return all.first;
+    return null;
   }
 
   /// 读取分析未读日记：能写画像的直接沉淀，想聊的建晚些的聊天任务，

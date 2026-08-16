@@ -44,6 +44,8 @@ class AiFunctionSystem {
           return await _getCategories();
         case 'getUniversalValues':
           return await _getUniversalValues(params['topic']);
+        case 'get_lore':
+          return await _getLore(params['topic']);
         case 'env_snapshot':
           return await _getEnvSnapshot();
         case 'speak':
@@ -347,7 +349,62 @@ class AiFunctionSystem {
         .toList();
   }
 
-  /// 7. 环境快照：用户当前城市 + 实时天气（IP 定位，零权限）
+  /// 7. 获取自己的档案（按主题从 character_bible.md 检索）
+  ///
+  /// 温晚照的记忆库：角色卡只装"说话风格"这一层常驻，遇到自己记不清的细节
+  /// （老莫年轻时的事、夏迟的职业、不寐的设定……）就调用这个查档案。
+  /// 与 _getUniversalValues 同一套「按需加载」模式，避免把整本档案塞进每次对话。
+  static Future<AiFunctionResult> _getLore(String? topic) async {
+    try {
+      final raw = await rootBundle.loadString('assets/ai/character_bible.md');
+      final sections = _splitMarkdownSections(raw);
+
+      if (sections.isEmpty) {
+        return AiFunctionResult(
+          functionName: 'get_lore',
+          data: null,
+          summary: '档案库当前为空。',
+        );
+      }
+
+      // 按主题关键词匹配章节（复用价值观的标题/正文打分逻辑）
+      final matched = _matchValueSections(sections, topic);
+
+      String summary;
+      if (matched.isEmpty) {
+        // 没匹配到，给出目录让 AI 换个主题词
+        final titles = sections.map((s) => s.title).join('\n');
+        summary = '档案里没有"$topic"的记录。你可以记得的：\n$titles\n\n请用上面的条目重新调用。';
+      } else {
+        final buf = StringBuffer();
+        for (final s in matched) {
+          buf.writeln('## ${s.title}');
+          buf.writeln(s.content);
+          buf.writeln();
+        }
+        summary = buf.toString();
+      }
+
+      // 截断防止上下文过长
+      if (summary.length > 2000) {
+        summary = '${summary.substring(0, 2000)}\n…(已截断，如需完整内容请换更具体的主题词)';
+      }
+
+      return AiFunctionResult(
+        functionName: 'get_lore',
+        data: matched.map((s) => s.title).toList(),
+        summary: summary,
+      );
+    } catch (e) {
+      return AiFunctionResult(
+        functionName: 'get_lore',
+        data: null,
+        summary: '档案加载失败: $e',
+      );
+    }
+  }
+
+  /// 8. 环境快照：用户当前城市 + 实时天气（IP 定位，零权限）
   static Future<AiFunctionResult> _getEnvSnapshot() async {
     final snap = await EnvironmentSensor.getSnapshot();
     if (snap == null) {
@@ -369,7 +426,7 @@ class AiFunctionSystem {
     );
   }
 
-  /// 8. 语音朗读：把指定文本合成语音并播放
+  /// 9. 语音朗读：把指定文本合成语音并播放
   static Future<AiFunctionResult> _speak(String? text) async {
     if (text == null || text.trim().isEmpty) {
       return AiFunctionResult(
@@ -386,7 +443,7 @@ class AiFunctionSystem {
     );
   }
 
-  /// 9. 获取某天的应用使用时间线：按时间段列出用户用了哪些应用、各多久。
+  /// 10. 获取某天的应用使用时间线：按时间段列出用户用了哪些应用、各多久。
   ///
   /// 这是阶段 2「行为认知」的函数地基：喂给模型可还原用户一天的生活节奏
   /// （什么时间段在做什么、是否用手机）。参数 date 可选（默认今天），

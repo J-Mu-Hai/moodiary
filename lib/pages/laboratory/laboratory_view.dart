@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:adaptive_dialog/adaptive_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -242,8 +244,10 @@ class _BrainSection extends StatefulWidget {
 class _BrainSectionState extends State<_BrainSection> {
   final logic = Bind.find<LaboratoryLogic>();
   List<AgentTask> _tasks = [];
+  List<AgentTask> _doneTasks = [];
   List<String> _rules = [];
   Map<String, dynamic>? _decision;
+  List<Map<String, dynamic>> _decisionLog = [];
   bool _loading = true;
 
   @override
@@ -254,13 +258,17 @@ class _BrainSectionState extends State<_BrainSection> {
 
   Future<void> _refresh() async {
     final tasks = await logic.loadActiveTasks();
+    final done = await logic.loadDoneTasks();
     final rules = await logic.loadRules();
     final decision = await logic.getLastBrainDecision();
+    final decisionLog = await logic.getBrainDecisionLog();
     if (!mounted) return;
     setState(() {
       _tasks = tasks;
+      _doneTasks = done;
       _rules = rules;
       _decision = decision;
+      _decisionLog = decisionLog;
       _loading = false;
     });
   }
@@ -318,10 +326,245 @@ class _BrainSectionState extends State<_BrainSection> {
   String _fmtHm(DateTime t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
+  /// 任务类型的中文标签（immediate=即时 / scheduled=定时 / longterm=长期）。
+  String _kindLabel(String kind) => switch (kind) {
+        'scheduled' => '定时',
+        'longterm' => '长期',
+        _ => '即时',
+      };
+
+  /// 任务状态的中文标签。
+  String _statusLabel(String status) => switch (status) {
+        'pending' => '待执行',
+        'running' => '执行中',
+        'waitingUser' => '等待回应',
+        'done' => '已完成',
+        'cancelled' => '已取消',
+        _ => status,
+      };
+
+  String _fmtFull(DateTime t) =>
+      '${t.year}/${t.month.toString().padLeft(2, '0')}/${t.day.toString().padLeft(2, '0')} '
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  /// 任务详情弹窗：完整展示「什么时间做什么事 + 执行情况」。
+  ///
+  /// 展示：状态/类型/动作/优先级、创建/定时/最后更新时间、参数（智能体打算
+  /// 做什么），以及 feedback 时间线（每次执行、失败重试、大脑判定、用户回应、
+  /// 阻断页结束等都会追加记录，即任务的执行与修改历史）。
+  Future<void> _showTaskDetail(AgentTask t) async {
+    if (!mounted) return;
+    final colorScheme = Theme.of(context).colorScheme;
+    final textStyle = Theme.of(context).textTheme;
+
+    Widget metaRow(String label, String value) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 72,
+                child: Text(label,
+                    style: textStyle.bodySmall
+                        ?.copyWith(color: colorScheme.onSurfaceVariant)),
+              ),
+              Expanded(
+                child: Text(value,
+                    style: textStyle.bodySmall
+                        ?.copyWith(color: colorScheme.onSurface)),
+              ),
+            ],
+          ),
+        );
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(t.title,
+                  maxLines: 2, overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: colorScheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(_statusLabel(t.status),
+                  style: textStyle.labelSmall
+                      ?.copyWith(color: colorScheme.onSecondaryContainer)),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                metaRow('类型', _kindLabel(t.kind)),
+                metaRow('动作', t.action),
+                if (t.priority != 0) metaRow('优先级', '${t.priority}'),
+                metaRow('创建', _fmtFull(t.createdAt)),
+                if (t.scheduledAt != null)
+                  metaRow('定时执行', _fmtFull(t.scheduledAt!)),
+                metaRow('最后更新', _fmtFull(t.updatedAt)),
+                const Divider(height: 16),
+                if (t.params.isNotEmpty) ...[
+                  Text('参数（智能体打算做什么）', style: textStyle.titleSmall),
+                  const SizedBox(height: 4),
+                  SelectableText(
+                    jsonEncode(t.params),
+                    style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                  ),
+                  const Divider(height: 16),
+                ],
+                Text('执行记录（${t.feedback.length} 条）',
+                    style: textStyle.titleSmall),
+                const SizedBox(height: 4),
+                if (t.feedback.isEmpty)
+                  Text('暂无记录',
+                      style: textStyle.bodySmall
+                          ?.copyWith(color: colorScheme.onSurfaceVariant))
+                else
+                  ...t.feedback.map(
+                    (f) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: SelectableText(f,
+                          style: const TextStyle(
+                              fontSize: 11, fontFamily: 'monospace')),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('好的'),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _fmtDecisionTime(Object? iso) {
     final t = DateTime.tryParse(iso?.toString() ?? '');
     if (t == null) return '';
     return '${t.month}/${t.day} ${_fmtHm(t)}';
+  }
+
+  /// 按日期分组展示输入/输出日志（新日期在上，组内新记录在上）。
+  ///
+  /// 每条记录一行：时刻 + 摘要 + 结果徽标，可展开「输入（上下文/反馈）」与
+  /// 「输出（决策/任务）」原文。kind=decision 为信号→计划，kind=feedback 为
+  /// 用户反馈→大脑判定。
+  List<Widget> _buildDateGroups(
+      ColorScheme colorScheme, TextTheme textStyle) {
+    final groups = <String, List<Map<String, dynamic>>>{};
+    final order = <String>[];
+    for (final rec in _decisionLog) {
+      final t = DateTime.tryParse(rec['time']?.toString() ?? '');
+      if (t == null) continue;
+      final key =
+          '${t.year}/${t.month.toString().padLeft(2, '0')}/${t.day.toString().padLeft(2, '0')}';
+      if (!groups.containsKey(key)) {
+        groups[key] = [];
+        order.add(key);
+      }
+      groups[key]!.add(rec);
+    }
+    return [
+      for (final key in order) ...[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+          child: Text(
+            _fmtDateTitle(groups[key]!.first) ?? key,
+            style: textStyle.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: colorScheme.primary,
+            ),
+          ),
+        ),
+        ...groups[key]!.map(
+          (rec) => _recordTile(rec, colorScheme, textStyle),
+        ),
+        const Divider(height: 12),
+      ],
+    ];
+  }
+
+  /// 日期标题：8月16日 星期日（带星期）。
+  String? _fmtDateTitle(Map<String, dynamic> rec) {
+    final t = DateTime.tryParse(rec['time']?.toString() ?? '');
+    if (t == null) return null;
+    const wd = ['一', '二', '三', '四', '五', '六', '日'];
+    return '${t.month}月${t.day}日 星期${wd[t.weekday - 1]}';
+  }
+
+  /// 一条输入/输出记录：时刻 + 摘要 + 结果徽标 + 可展开输入/输出。
+  Widget _recordTile(Map<String, dynamic> rec, ColorScheme colorScheme,
+      TextTheme textStyle) {
+    final isFeedback = rec['kind'] == 'feedback';
+    final noop = rec['noop'] == true;
+    final t = DateTime.tryParse(rec['time']?.toString() ?? '');
+    final icon = isFeedback
+        ? Icons.chat_bubble_outline
+        : (noop ? Icons.info_outline : Icons.assignment_outlined);
+    final iconColor = isFeedback
+        ? colorScheme.tertiary
+        : (noop ? colorScheme.tertiary : colorScheme.primary);
+    final badge = isFeedback
+        ? '反馈'
+        : (noop ? '无需行动' : '生成 ${rec['taskCount'] ?? 0} 个任务');
+    final summary = rec['summary']?.toString() ?? '';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(icon, size: 15, color: iconColor),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '${t != null ? _fmtHm(t) : ''} · $summary',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: textStyle.bodySmall,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(badge,
+                    style: textStyle.labelSmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant)),
+              ),
+            ],
+          ),
+          _ExpandableText(
+              label: '输入（上下文/反馈）',
+              text: rec['input']?.toString() ?? ''),
+          _ExpandableText(
+              label: '输出（决策/任务）',
+              text: rec['output']?.toString() ?? ''),
+        ],
+      ),
+    );
   }
 
   @override
@@ -450,6 +693,20 @@ class _BrainSectionState extends State<_BrainSection> {
               ),
             ),
           ),
+        // 智能体输入/输出记录（按日期分组，开发阶段观察「每天有什么输入/输出」）
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Text('智能体输入/输出记录（按日期）', style: textStyle.titleSmall),
+        ),
+        if (_decisionLog.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+                '暂无记录：大脑每做一次决策、或处理一次用户反馈，都会按日期归档到这里',
+                style: TextStyle(fontSize: 12)),
+          )
+        else
+          ..._buildDateGroups(colorScheme, textStyle),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
           child: Text('任务库（进行中）', style: textStyle.titleSmall),
@@ -468,6 +725,7 @@ class _BrainSectionState extends State<_BrainSection> {
         else
           ..._tasks.map((t) => ListTile(
                 dense: true,
+                onTap: () => _showTaskDetail(t),
                 leading: Icon(
                   t.action == 'block_screen'
                       ? Icons.lock_clock
@@ -479,7 +737,7 @@ class _BrainSectionState extends State<_BrainSection> {
                 ),
                 title: Text(t.title, maxLines: 2, overflow: TextOverflow.ellipsis),
                 subtitle: Text(
-                  '${t.action} · ${t.status}'
+                  '${_kindLabel(t.kind)} · ${t.action} · ${t.status}'
                   '${t.scheduledAt != null ? ' @${_fmtHm(t.scheduledAt!)}' : ''}',
                   style: textStyle.bodySmall?.copyWith(
                       color: colorScheme.onSurfaceVariant),
@@ -498,6 +756,42 @@ class _BrainSectionState extends State<_BrainSection> {
                       tooltip: '取消',
                     ),
                   ],
+                ),
+              )),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Text('任务执行记录（最近 10 条）', style: textStyle.titleSmall),
+        ),
+        if (_doneTasks.isEmpty)
+          const ListTile(
+            dense: true,
+            title: Text('暂无已执行任务'),
+            subtitle: Text('任务执行完成或用户回应后，会记录到这里'),
+          )
+        else
+          ..._doneTasks.map((t) => ListTile(
+                dense: true,
+                onTap: () => _showTaskDetail(t),
+                leading: Icon(
+                  Icons.done_all,
+                  size: 20,
+                  color: colorScheme.primary,
+                ),
+                title:
+                    Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: Text(
+                  t.feedback.isEmpty
+                      ? '${_kindLabel(t.kind)} · ${t.status}'
+                      : '${_kindLabel(t.kind)} · ${t.feedback.last}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textStyle.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant),
+                ),
+                trailing: Text(
+                  _fmtHm(t.updatedAt),
+                  style: textStyle.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant),
                 ),
               )),
         Padding(

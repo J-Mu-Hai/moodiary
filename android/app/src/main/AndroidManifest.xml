@@ -24,6 +24,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Android 13+ 显示监督通知所需 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 系统级全屏悬浮窗：智能体「强制锁屏」覆盖所有应用、拦截 Home 手势（阶段4 block_phone 提前实现） -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <queries>
         <!-- If your app checks for SMS support -->

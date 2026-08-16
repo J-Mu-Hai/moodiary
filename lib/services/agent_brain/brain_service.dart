@@ -1,8 +1,11 @@
 import 'dart:async';
 
+import 'package:moodiary/utils/notice_util.dart';
+
 import 'agent_executor.dart';
 import 'agent_monitor.dart';
 import 'agent_task.dart';
+import 'brain_reflect.dart';
 
 /// 大脑服务 — 智能体的「心跳」：每分钟轮询到点任务分发执行 + 检查代码监督信号。
 ///
@@ -17,6 +20,7 @@ class BrainService {
   Timer? _timer;
   bool _initialized = false;
   bool _busy = false;
+  bool _dispatching = false; // 派发串行锁：防多信号并发 runDueNow 重复派发
 
   Future<void> init() async {
     if (_initialized) return;
@@ -64,12 +68,25 @@ class BrainService {
 
   /// 找出到点任务并分发执行。
   Future<void> _dispatchDueTasks() async {
+    // 串行锁：runDueNow 不经 _busy 守卫，多信号并发时若不加锁，多个派发会
+    // 同时取到同一批 pending 任务，重复执行/防连发守卫出现竞态。
+    if (_dispatching) return;
+    _dispatching = true;
+    try {
+      await _dispatchDueTasksLocked();
+    } finally {
+      _dispatching = false;
+    }
+  }
+
+  Future<void> _dispatchDueTasksLocked() async {
     final pending = await AgentTaskStore.query(status: 'pending');
     final now = DateTime.now();
     final due = pending.where((t) {
       if (t.kind == 'immediate') return true;
       if (t.kind == 'scheduled') {
-        return t.scheduledAt != null && !t.scheduledAt!.isAfter(now);
+        // scheduledAt 为 null 时按到点处理，避免任务永远卡 pending
+        return t.scheduledAt == null || !t.scheduledAt!.isAfter(now);
       }
       return false; // longterm 不自动执行，等大脑/用户处理
     }).toList();
@@ -80,6 +97,13 @@ class BrainService {
       await AgentTaskStore.update(task);
       try {
         await AgentExecutor.execute(task);
+        // 不带自有 UI 的动作（语音/画像沉淀/日记分析）用 toast 让执行可见；
+        // start_chat / ask_user / block_screen 自身会跳页/播报，不再重复弹。
+        if (task.action != 'start_chat' &&
+            task.action != 'ask_user' &&
+            task.action != 'block_screen') {
+          NoticeUtil.showToast('智能体已执行：「${task.title}」');
+        }
         // 执行器已写终态。若仍为 running 且非阻断页，兜底置 done。
         final after = await AgentTaskStore.byId(task.id);
         if (after != null &&
@@ -89,6 +113,8 @@ class BrainService {
           after.feedback = [...after.feedback, '[执行] 完成'];
           await AgentTaskStore.update(after);
         }
+        // 反思学习回路：终态任务复盘一次（有用户反应的任务才会真正反思）
+        unawaited(BrainReflect.maybeReflect(after ?? task));
       } catch (e) {
         // 执行失败：重排 5 分钟后重试，超过 3 次取消
         final retries =
@@ -97,6 +123,9 @@ class BrainService {
           task.status = 'cancelled';
           task.feedback = [...task.feedback, '[执行] 多次失败，已取消'];
           await AgentTaskStore.update(task);
+          // 取消的任务含失败时间线，值得反思一次
+          unawaited(BrainReflect.maybeReflect(task));
+          NoticeUtil.showToast('任务「${task.title}」多次失败，已取消');
         } else {
           task.status = 'pending';
           task.scheduledAt = DateTime.now().add(const Duration(minutes: 5));
@@ -105,6 +134,7 @@ class BrainService {
             '[执行] 执行失败，5 分钟后重试: $e',
           ];
           await AgentTaskStore.update(task);
+          NoticeUtil.showToast('任务「${task.title}」执行失败，5 分钟后重试');
         }
       }
     }

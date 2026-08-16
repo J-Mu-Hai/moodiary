@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -11,6 +12,8 @@ import 'package:moodiary/utils/environment_sensor.dart';
 
 import 'agent_rule.dart';
 import 'agent_task.dart';
+import 'brain_reflect.dart';
+import 'brain_service.dart';
 
 /// 大脑信号 — 代码机械监督 / 用户规则 / 任务变化 送入大脑的输入。
 ///
@@ -40,6 +43,11 @@ class AgentBrain {
   /// 同类信号冷却时长（防止每个信号都烧一次 AI 调用）
   static const Duration signalCooldown = Duration(hours: 6);
 
+  /// 按日期回溯日志（brainDecisionLog）的容量与字段截断：
+  /// 开发阶段观察「智能体每天有什么输入/输出」，同时控制 SharedPreferences 体积。
+  static const int _logCapacity = 50;
+  static const int _logFieldLimit = 2500;
+
   /// 大脑可规划的合法动作（与 AgentExecutor 分发一致）
   static const List<String> validActions = [
     'tts',
@@ -48,6 +56,7 @@ class AgentBrain {
     'block_screen',
     'update_profile',
     'analyze_diaries',
+    'open_diary',
   ];
 
   static const List<String> validKinds = [
@@ -73,7 +82,15 @@ class AgentBrain {
 
     final context = await _buildContext(signal);
     final base = await AiPromptManager().loadPrompt('brain_plan.txt');
-    final system = '$base\n\n---- 以下是本次决策的上下文 ----\n\n$context';
+    final persona = await AiPromptManager().loadPersona();
+    // 角色卡注入：规划者也保持同一人格，但输出必须严格遵循 brain_plan 的 JSON
+    final personaBlock = persona.isNotEmpty
+        ? '【角色卡 · 你的人格】\n$persona\n\n'
+            '你始终是 Sonder 本人，但这里你是后台规划者：输出必须严格遵循下方格式，'
+            '不要在 JSON 里添加表情或语气词。\n\n'
+        : '';
+    final system =
+        '$personaBlock$base\n\n---- 以下是本次决策的上下文 ----\n\n$context';
 
     final String raw;
     try {
@@ -118,7 +135,17 @@ class AgentBrain {
       print('[AgentBrain] 信号 ${signal.type} → 生成 ${created.length} 个任务');
     }
 
-    // 记录本次决策的输入/输出（实验室「大脑输入/输出」监督面板读取）
+    // 立即派发：信号新建的 immediate/到点定时任务不必等下一分钟轮询。
+    // runDueNow 不经 _busy 守卫且派发前先把任务置 running，并发安全（见 brain_service）。
+    if (parsed.tasks.isNotEmpty) {
+      unawaited(BrainService().runDueNow());
+    }
+
+    // 记录本次决策的输入/输出（实验室「大脑输入/输出」监督面板 + 按日期历史日志）
+    final taskTitles = parsed.tasks
+        .map((t) => t['title']?.toString().trim() ?? '')
+        .where((s) => s.isNotEmpty)
+        .toList();
     await _recordDecision(
       signal,
       input: context,
@@ -127,6 +154,7 @@ class AgentBrain {
       reason: parsed.reason,
       taskCount: parsed.tasks.length,
       summary: summary,
+      taskTitles: taskTitles,
     );
     return summary;
   }
@@ -135,6 +163,7 @@ class AgentBrain {
   ///
   /// 实验室页据此展示「送进大脑的上下文」与「模型原始输出」，让用户
   /// 能验证输入是否真正成功、决策依据是什么。
+  /// 同时把本次决策追加进按日期回溯的历史日志（key=brainDecisionLog）。
   static Future<void> _recordDecision(
     BrainSignal signal, {
     required String input,
@@ -143,6 +172,7 @@ class AgentBrain {
     required String reason,
     required int taskCount,
     required String summary,
+    required List<String> taskTitles,
   }) async {
     final data = jsonEncode({
       'time': DateTime.now().toIso8601String(),
@@ -157,7 +187,42 @@ class AgentBrain {
     });
     await PrefUtil.setValue<String>('brainLastDecision', data);
     print('[AgentBrain] 决策已记录: ${signal.type} noop=$noop tasks=$taskCount');
+    // 追加到按日期回溯的日志（开发观察：每天智能体都有什么输入/输出）
+    await _appendLog({
+      'kind': 'decision',
+      'time': DateTime.now().toIso8601String(),
+      'signalType': signal.type,
+      'summary': summary,
+      'noop': noop,
+      'reason': reason,
+      'taskCount': taskCount,
+      'taskTitles': taskTitles,
+      'input': _truncate(input),
+      'output': _truncate(output),
+    });
   }
+
+  /// 把一条输入/输出记录追加进历史日志（新→旧），超容量裁剪最旧的。
+  static Future<void> _appendLog(Map<String, dynamic> record) async {
+    const key = 'brainDecisionLog';
+    var list = <dynamic>[];
+    final s = PrefUtil.getValue<String>(key);
+    if (s != null && s.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(s);
+        if (decoded is List) list = decoded;
+      } catch (_) {
+        // 历史数据损坏则丢弃重建
+      }
+    }
+    list.insert(0, record);
+    if (list.length > _logCapacity) list = list.sublist(0, _logCapacity);
+    await PrefUtil.setValue<String>(key, jsonEncode(list));
+  }
+
+  /// 超长字段截断（保留可读信息，控制日志体积）。
+  static String _truncate(String s, [int limit = _logFieldLimit]) =>
+      s.length <= limit ? s : '${s.substring(0, limit)}…[截断]';
 
   /// 处理用户对某个任务的反馈：写入反馈 → AI 决定「结束 / 继续等待」。
   static Future<String> processFeedback(String taskId, String feedback) async {
@@ -208,6 +273,14 @@ ${task.feedback.join('\n')}
       task.status = 'waitingUser';
       task.feedback = [...task.feedback, '[大脑] 继续等待：$reason'];
       await AgentTaskStore.update(task);
+      // 开发观察：把「用户反馈 → 继续等待」也记进按日期回溯的日志
+      await _appendLog({
+        'kind': 'feedback',
+        'time': DateTime.now().toIso8601String(),
+        'summary': '任务「${task.title}」用户反馈：$feedback',
+        'input': '任务「${task.title}」· 用户反馈：$feedback',
+        'output': '大脑判定：继续等待${reason.isNotEmpty ? '（$reason）' : ''}',
+      });
       return '任务「${task.title}」继续等待用户回应';
     }
 
@@ -226,6 +299,17 @@ ${task.feedback.join('\n')}
     task.status = 'done';
     task.feedback = [...task.feedback, '[大脑] 任务已解决：$reason'];
     await AgentTaskStore.update(task);
+    // 开发观察：把「用户反馈 → 已解决」也记进按日期回溯的日志
+    await _appendLog({
+      'kind': 'feedback',
+      'time': DateTime.now().toIso8601String(),
+      'summary': '任务「${task.title}」用户反馈：$feedback',
+      'input': '任务「${task.title}」· 用户反馈：$feedback',
+      'output': '大脑判定：已解决${reason.isNotEmpty ? '（$reason）' : ''}'
+          '${insight.isNotEmpty ? '· 沉淀画像：$insight' : ''}',
+    });
+    // 反思学习回路：有用户回应的任务（ask_user/start_chat）复盘沉淀画像
+    unawaited(BrainReflect.maybeReflect(task));
     return '任务「${task.title}」已结束${insight.isNotEmpty ? '（$insight）' : ''}';
   }
 

@@ -38,6 +38,11 @@ class AiPromptManager {
     return await loadPrompt('system_base.txt');
   }
 
+  /// 加载 Sonder 角色卡（人格定义；对话/规划/复盘共用，保证同一人格）。
+  Future<String> loadPersona() async {
+    return await loadPrompt('sonder_persona.txt');
+  }
+
   /// 加载私有知识库（认知档案）
   Future<String> loadKnowledgeBase() async {
     try {
@@ -83,6 +88,7 @@ class AiPromptManager {
     Map<String, String>? triggerData,
   }) async {
     final base = await loadBaseSystemPrompt();
+    final persona = await loadPersona();
     final personality = await loadJson('personality.json');
     final functions = await loadJson('functions.json');
     final knowledge = await loadKnowledgeBase();
@@ -91,6 +97,12 @@ class AiPromptManager {
     final buf = StringBuffer();
     buf.writeln(base);
     buf.writeln('\n---');
+
+    // 角色卡：定义"我是谁 + 怎么说话"，覆盖基础人格，让 Sonder 有人味
+    if (persona.isNotEmpty) {
+      buf.writeln('\n【角色卡 · 我是谁】');
+      buf.writeln(persona);
+    }
 
     // 通用价值观 · 概述（始终注入，三层结构之一）
     if (valuesOverview.isNotEmpty) {

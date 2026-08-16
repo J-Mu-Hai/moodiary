@@ -118,6 +118,8 @@ class PrefUtil {
     'brainCooldowns',
     // 大脑最近一次决策的输入/输出（实验室监督面板）
     'brainLastDecision',
+    // 大脑输入/输出历史日志（按日期回溯，开发观察，见 agent_brain.dart）
+    'brainDecisionLog',
     // 日记「是否被 AI 读过」侧表（diary_ai_read.dart）
     'diaryAiRead',
   };

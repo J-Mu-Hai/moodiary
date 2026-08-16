@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 智能体「强制锁屏」系统级悬浮窗（TYPE_APPLICATION_OVERLAY）。
+     全屏覆盖在系统之上，拦截 Home/切换应用手势；倒计时由 Dart 侧驱动，
+     通过 moodiary/agent 通道 updateForceLock 每秒刷新。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#E8101022"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="32dp">
+
+    <TextView
+        android:id="@+id/lock_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="强制锁屏"
+        android:textColor="#FFFFFFFF"
+        android:textSize="26sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/lock_reason"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center"
+        android:textColor="#B3FFFFFF"
+        android:textSize="16sp"
+        android:visibility="gone"
+        tools:text="休息时间到了" />
+
+    <TextView
+        android:id="@+id/lock_countdown"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="36dp"
+        android:gravity="center"
+        android:text="15:00"
+        android:textColor="#FFFFFFFF"
+        android:textSize="56sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:text="专注中 · 倒计时结束后自动解锁"
+        android:textColor="#80FFFFFF"
+        android:textSize="14sp" />
+</LinearLayout>

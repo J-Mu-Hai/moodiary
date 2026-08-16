@@ -172,6 +172,13 @@ class LaboratoryLogic extends GetxController {
     return [...pending, ...running, ...waiting];
   }
 
+  /// 已执行任务（最近 10 条，按 updatedAt 倒序），供「任务执行记录」区块展示。
+  Future<List<AgentTask>> loadDoneTasks() async {
+    final done = await AgentTaskStore.query(status: 'done');
+    done.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return done.take(10).toList();
+  }
+
   /// 手动触发一类信号（force 跳过冷却），返回大脑决策结果。
   Future<String> triggerBrainSignal(String type) async {
     final signals = <String, BrainSignal>{
@@ -219,6 +226,24 @@ class LaboratoryLogic extends GetxController {
       return jsonDecode(s) as Map<String, dynamic>;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// 按日期回溯的智能体输入/输出日志（新→旧，供实验室按日期分组展示）。
+  ///
+  /// 记录每条大脑决策（kind=decision：信号 → 生成的计划）与每次反馈判定
+  /// （kind=feedback：用户反馈 → 大脑判定 done/wait），开发阶段观察
+  /// 「智能体每天有什么输入、产出了什么输出」。
+  Future<List<Map<String, dynamic>>> getBrainDecisionLog() async {
+    final s = PrefUtil.getValue<String>('brainDecisionLog');
+    if (s == null || s.isEmpty) return [];
+    try {
+      return (jsonDecode(s) as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return [];
     }
   }
 
