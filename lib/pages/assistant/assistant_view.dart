@@ -85,6 +85,9 @@ class AssistantPage extends StatelessWidget {
       return ChatBubble(
         content: msg.content,
         isUser: msg.role == 'user',
+        // 微信式最长气泡：0.72 接近微信的最大宽度（约 70-75% 屏宽），
+        // 比默认 0.56 更接近聊天软件的感觉。
+        maxWidthFactor: 0.72,
       );
     }
 

@@ -92,6 +92,9 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _loadProvider();
     _loadChat();
+    // 进入对话页应停在最后一条消息：列表在下一帧才建好，先等一帧再滚到底，
+    // 否则停留在历史第一条（用户上次说到哪、AI 说到哪都看不见）。
+    WidgetsBinding.instance.addPostFrameCallback((_) => toBottom());
     _injectPendingReview();
     // 聊天页打开期间每 10 秒轻量轮询一次，秒级收到另一端的新消息；
     // 打开瞬间先完整同步一次（推+拉）并刷新消息。
@@ -380,6 +383,7 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
       }
       final sysCount = followUp.takeWhile((m) => m.role == 'system').length;
       followUp.insert(sysCount, _timeMessage());
+      followUp = _inlineTimeIntoLastUser(followUp);
 
       // 6. 二次流式回复，同样分块成气泡
       final followStream = await _currentProvider!.chat(
@@ -400,18 +404,34 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     }
   }
 
-  /// 当前时间消息：每次请求新鲜注入，杜绝 AI 日期幻觉
-  AIMessage _timeMessage() {
+  /// 当前时间戳文本（每次请求新鲜生成，杜绝 AI 日期/时间幻觉）
+  String _timeStampText() {
     final now = DateTime.now();
     const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
     final wd = weekdays[now.weekday - 1];
     final hh = now.hour.toString().padLeft(2, '0');
     final mm = now.minute.toString().padLeft(2, '0');
-    return AIMessage(
-      role: 'system',
-      content: '【当前时间】今天是 ${now.year}年${now.month}月${now.day}日 星期$wd，'
-          '现在 $hh:$mm。回答涉及日期、时间、星期、时效性的问题时，一律以此刻为准，不要猜测或编造。',
-    );
+    return '【当前时间】今天是 ${now.year}年${now.month}月${now.day}日 星期$wd，'
+        '现在 $hh:$mm。';
+  }
+
+  /// 当前时间 system 消息：每次请求新鲜注入，作为时间信息的主通道
+  AIMessage _timeMessage() => AIMessage(
+        role: 'system',
+        content: '${_timeStampText()}'
+            '回答涉及日期、时间、星期、时效性的问题时，一律以此刻为准，不要猜测或编造。',
+      );
+
+  /// 把当前时间内联进最后一条 user 消息的开头。
+  /// 部分模型（如腾讯混元）会忽略/丢弃 system 角色消息，但 user 消息
+  /// 一定会被读到。只在请求副本上改，不影响界面显示与持久化。
+  List<AIMessage> _inlineTimeIntoLastUser(List<AIMessage> msgs) {
+    final lastUserIdx = msgs.lastIndexWhere((m) => m.role == 'user');
+    if (lastUserIdx < 0) return msgs;
+    final u = msgs[lastUserIdx];
+    msgs[lastUserIdx] =
+        AIMessage(role: 'user', content: '${_timeStampText()}\n${u.content}');
+    return msgs;
   }
 
   /// 出站消息合并：连续同角色消息合并成一条（兼容各 API + 省 token）
@@ -431,7 +451,9 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
   /// 流式接收 AI 输出 → 增量分块成气泡 → 管理打字指示器。返回分块器（raw 供提取 CALL）。
   Future<ReplyChunker> _streamAssistantReply(Stream<String> stream) async {
     final mySession = _session;
-    final chunker = ReplyChunker();
+    // 微信式长气泡：maxLen 60→120，一句完整的话（60~120 字）不再被强制切成
+    // 两个 60 字短泡，保持"一句一泡"的呼吸感同时气泡明显更长。
+    final chunker = ReplyChunker(maxLen: 120);
     final pacer = TypingPacer();
     var firstBubble = true;
     state.isTyping.value = true;
@@ -688,9 +710,12 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
         }
       }
 
-      // 时间注入：每次请求都新鲜注入，放在第一个非 system 消息之前（离用户问题最近）
+      // 时间注入：每次请求都新鲜注入，放在第一个非 system 消息之前（离用户问题最近）。
+      // 同时在最后一条 user 消息里内联一份时间戳——混元这类模型可能丢弃
+      // system 角色消息（见 _inlineTimeIntoLastUser 注释），user 内联是兜底。
       final sysCount = chatMessages.takeWhile((m) => m.role == 'system').length;
       chatMessages.insert(sysCount, _timeMessage());
+      chatMessages = _inlineTimeIntoLastUser(chatMessages);
 
       // 发起流式请求
       final stream = await _currentProvider!.chat(
