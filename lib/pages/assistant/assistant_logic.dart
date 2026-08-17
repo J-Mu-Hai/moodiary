@@ -70,7 +70,30 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
   void onReady() {
     WidgetsBinding.instance.addObserver(this);
     _loadProvider();
+    _injectPendingReview();
     super.onReady();
+  }
+
+  /// 注入「夜间归位」留下的待读复盘：用户下次打开助手页时，以第一条
+  /// 助手消息呈现（不打扰、不跳页）。无论成败都消费掉，避免每天重复弹。
+  void _injectPendingReview() {
+    final s = PrefUtil.getValue<String>('nightlyReview');
+    if (s == null || s.isEmpty) return;
+    unawaited(PrefUtil.removeValue('nightlyReview'));
+    try {
+      final m = jsonDecode(s) as Map<String, dynamic>;
+      final date = m['date']?.toString() ?? '';
+      final content = m['content']?.toString() ?? '';
+      if (content.isEmpty) return;
+      final head = date.isNotEmpty ? '【$date 夜间归位】\n' : '';
+      state.messages.add(AIMessage(
+        role: 'assistant',
+        content: '$head$content',
+      ));
+      update();
+    } catch (_) {
+      // 解析失败：已消费，不弹
+    }
   }
 
   @override

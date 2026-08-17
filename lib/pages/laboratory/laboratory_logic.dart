@@ -212,6 +212,11 @@ class LaboratoryLogic extends GetxController {
         summary: '【手动测试】模拟长期计划到期回访信号。',
         data: {'manual': true},
       ),
+      'task_stall': BrainSignal(
+        type: 'task_stall',
+        summary: '【手动测试】模拟用户任务板块停滞信号（有任务多日未更新）。',
+        data: {'manual': true, 'titles': ['（示例任务）'], 'stallDays': 3},
+      ),
     };
     final signal = signals[type];
     if (signal == null) return '未知信号类型: $type';
@@ -265,6 +270,19 @@ class LaboratoryLogic extends GetxController {
   }
 
   Future<List<String>> loadRules() => AgentRuleStore.load();
+
+  /// 手动执行一次夜间归位（实验室验证用，不经大脑决策，直接跑归位执行器）。
+  Future<String> runNightlyReview() async {
+    final task = AgentTask(
+      title: '夜间归位：梳理今天',
+      kind: 'scheduled',
+      action: 'nightly_review',
+      scheduledAt: DateTime.now(),
+      priority: 2,
+    );
+    await AgentTaskStore.add(task);
+    return await executeTask(task);
+  }
 
   /// 手动执行一个任务（实验室直接跑执行器，不等到点轮询）。
   Future<String> executeTask(AgentTask task) async {

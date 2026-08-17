@@ -21,6 +21,10 @@ TA 写的日记像记忆碎片一样落到她面前。她陪你拼碎片、不�
 |---|---|---|---|
 | 陪伴聊天 | 倾听、共情、启发式对话，注入画像与角色卡 | assistant_logic + system_base + sonder_persona | ✅ |
 | 记住你 | 沉淀画像，跨天记住习惯/情绪/目标/困境 | MemoryService + memory_consolidate | ✅ |
+
+**画像结构（v2）**：9 大类常驻槽位（基础认知/生活习惯/情绪状态/偏好与习惯/目标与痛点/人际关系/行为规律/梦想与理想/行为逻辑），
+每条认知带 `confidence`（0-1，决定智能体说话语气）+ `source`（explicit/diary_analysis/pattern_recognition/interaction/legacy）。
+旧数据自动迁移（来源记 `legacy`，置信 0.6）。展示在「使用时间」页按类别分组 + 置信/来源徽标。
 | 语音提醒 | 到点 TTS 播报（蓝牙耳机优先私密播报） | TtsSpeaker + AgentExecutor.tts | ✅ |
 | 发起会话 | 有耳机先语音开场白再切对话页；无耳机直接切；每次完整送达+防连发 | AgentExecutor.start_chat/ask_user | ✅ 真机验证 |
 | 任务规划 | 信号/规则 → 模型决策 → 拆成 immediate/scheduled/longterm 任务 | AgentBrain + brain_plan.txt | ✅ |

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:moodiary/common/models/isar/diary.dart';
 import 'package:moodiary/presentation/isar.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/memory_service.dart';
@@ -22,6 +23,7 @@ class BrainMonitor {
   DateTime? _lastUsageCheck;
   DateTime? _lastProfileCheck;
   DateTime? _lastLongtermCheck;
+  DateTime? _lastTaskStallCheck;
 
   static const String _kWeather = 'brainLastWeather';
   static const String _kDiaryTs = 'brainLastDiaryTs';
@@ -40,6 +42,7 @@ class BrainMonitor {
     await _checkUsageCategory();
     await _checkProfile();
     await _checkLongterm();
+    await _checkTaskStall();
   }
 
   // ─── 信号 1：地点/天气变化 ─────────────────────────────
@@ -180,9 +183,10 @@ class BrainMonitor {
     _lastProfileCheck = now;
     try {
       final data = await MemoryService.load();
-      if (data.aspects.isNotEmpty) {
+      if (data.entries.isNotEmpty) {
         // 画像已初始化但缺最基础的「基础认知」（姓名/年龄/身份）→ 引导第一次沟通
-        final hasBasic = data.aspects.any((a) => a.startsWith('[基础认知]'));
+        final hasBasic =
+            data.entries.any((e) => e.category == '基础认知');
         if (!hasBasic) {
           print('[BrainMonitor] 画像缺基础认知');
           await AgentBrain.handleSignal(BrainSignal(
@@ -239,6 +243,64 @@ class BrainMonitor {
       ));
     } catch (e) {
       print('[BrainMonitor] longterm check error: $e');
+    }
+  }
+
+  // ─── 信号 6：用户任务管理板块停滞 ──────────────────────
+
+  /// 用户任务多少天未更新视为停滞（可调）
+  static const int taskStallDays = 3;
+
+  Future<void> _checkTaskStall() async {
+    final now = DateTime.now();
+    if (_lastTaskStallCheck != null &&
+        now.difference(_lastTaskStallCheck!).inHours < 24) {
+      return;
+    }
+    _lastTaskStallCheck = now;
+    try {
+      final pending = await _pendingUserTasks();
+      if (pending.isEmpty) return;
+      final stalled = pending
+          .where((t) => now.difference(t.time).inDays >= taskStallDays)
+          .toList();
+      if (stalled.isEmpty) return;
+      final lines = stalled
+          .map((t) => '「${t.title.isEmpty ? '(无标题)' : t.title}」'
+              '${now.difference(t.time).inDays}天未动')
+          .join('、');
+      print('[BrainMonitor] 任务停滞: $lines');
+      await AgentBrain.handleSignal(BrainSignal(
+        type: 'task_stall',
+        summary: '用户任务板块有 ${stalled.length} 个任务已 $taskStallDays 天以上未更新：$lines。'
+            '请 gently 提醒进展，或帮用户把任务拆小/调整计划，不要施压。',
+        data: {
+          'titles': stalled.map((t) => t.title).toList(),
+          'stallDays': taskStallDays,
+        },
+      ));
+    } catch (e) {
+      print('[BrainMonitor] task stall check error: $e');
+    }
+  }
+
+  /// 用户「任务管理」分类下未完成（无「完成」标签）的近期任务。
+  static Future<List<Diary>> _pendingUserTasks() async {
+    try {
+      final cats = await IsarUtil.getAllCategoryAsync();
+      final taskCat =
+          cats.where((c) => c.categoryName == '任务管理').toList();
+      if (taskCat.isEmpty) return [];
+      final cat = taskCat.first;
+      final now = DateTime.now();
+      final all = await IsarUtil.getDiariesByDateRange(
+          now.subtract(const Duration(days: 30)), now);
+      return all
+          .where((d) =>
+              d.show && d.categoryId == cat.id && !d.tags.contains('完成'))
+          .toList();
+    } catch (_) {
+      return [];
     }
   }
 

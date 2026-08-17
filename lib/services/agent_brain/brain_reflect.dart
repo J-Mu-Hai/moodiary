@@ -74,8 +74,10 @@ ${profile.isEmpty ? '（暂无）' : profile}''';
 
       String summary = '';
       if (aspects.isNotEmpty) {
-        final data = await MemoryService.mergeAspects(aspects);
-        summary = '沉淀 ${data.aspects.length} 条画像';
+        // 反思提炼的洞察来源记为 pattern_recognition（从任务经过中识别出的行为规律）
+        final data = await MemoryService.mergeAspects(aspects,
+            source: 'pattern_recognition');
+        summary = '沉淀 ${data.totalCount} 条画像';
       }
       await _markReflected();
       latest.feedback = [

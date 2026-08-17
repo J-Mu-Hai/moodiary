@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:moodiary/common/models/isar/usage_session.dart';
 import 'package:moodiary/common/values/border.dart';
 import 'package:moodiary/components/base/button.dart';
+import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/utils/session_merger.dart';
 import 'package:refreshed/refreshed.dart';
 
@@ -357,6 +358,36 @@ class ScreenTimePage extends StatelessWidget {
     // 用户画像面板：直接观察智能体沉淀的长期认知（阶段 1/2 记忆层可视化）
     Widget buildProfilePanel() {
       final data = state.memoryData;
+
+    // 单条认知：内容 + 置信度/来源（类别标签已在分类标题行展示）
+    Widget _profileEntryRow(ProfileEntry e) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(e.content, style: textStyle.bodyMedium),
+                  const SizedBox(height: 1),
+                  Text(
+                    '置信 ${e.confidence.toStringAsFixed(1)} · '
+                    '${profileSourceLabel(e.source)}',
+                    style: textStyle.labelSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
       return Card.filled(
         color: colorScheme.surfaceContainer,
         child: Padding(
@@ -413,7 +444,7 @@ class ScreenTimePage extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (data.aspects.isEmpty)
+                if (data.entries.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Center(
@@ -430,44 +461,48 @@ class ScreenTimePage extends StatelessWidget {
                   Expanded(
                     child: ListView.builder(
                       padding: EdgeInsets.zero,
-                      itemCount: data.aspects.length,
-                      itemBuilder: (_, i) {
-                        final aspect = data.aspects[i];
-                        final catMatch =
-                            RegExp(r'^\[([^\]]+)\]').firstMatch(aspect);
-                        final cat = catMatch?.group(1) ?? '';
-                        final content = catMatch == null
-                            ? aspect
-                            : aspect.substring(catMatch.end).trimLeft();
+                      // 9 大类结构常驻：始终渲染全部类别（含空的「待沉淀」），
+                      // 每条认知带置信度与来源徽标。
+                      itemCount: profileCategories.length,
+                      itemBuilder: (_, ci) {
+                        final cat = profileCategories[ci];
+                        final items = data.categories[cat] ?? const [];
                         final catColor = categoryColor(cat);
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 3),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (cat.isNotEmpty)
-                                Container(
-                                  margin: const EdgeInsets.only(top: 1),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: catColor.withValues(alpha: 0.15),
-                                    borderRadius:
-                                        AppBorderRadius.smallBorderRadius,
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding:
+                                  const EdgeInsets.only(top: 8, bottom: 2),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: catColor.withValues(alpha: 0.15),
+                                      borderRadius:
+                                          AppBorderRadius.smallBorderRadius,
+                                    ),
+                                    child: Text(
+                                      cat,
+                                      style: textStyle.labelSmall
+                                          ?.copyWith(color: catColor),
+                                    ),
                                   ),
-                                  child: Text(
-                                    cat,
-                                    style: textStyle.labelSmall
-                                        ?.copyWith(color: catColor),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    items.isEmpty ? '待沉淀' : '${items.length} 条',
+                                    style: textStyle.labelSmall?.copyWith(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
                                   ),
-                                ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(content,
-                                    style: textStyle.bodyMedium),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                            if (items.isNotEmpty)
+                              ...items.map((e) => _profileEntryRow(e)),
+                          ],
                         );
                       },
                     ),

@@ -6,11 +6,14 @@ import 'package:moodiary/common/models/isar/diary.dart';
 import 'package:moodiary/pages/assistant/assistant_logic.dart';
 import 'package:moodiary/pages/diary_details/diary_details_logic.dart';
 import 'package:moodiary/presentation/isar.dart';
+import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/router/app_routes.dart';
+import 'package:moodiary/services/ai_prompt_manager.dart';
 import 'package:moodiary/services/ai_provider_manager.dart';
 import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/utils/agent_channel.dart';
 import 'package:moodiary/utils/notice_util.dart';
+import 'package:moodiary/utils/session_merger.dart';
 import 'package:moodiary/utils/tts_speaker.dart';
 import 'package:refreshed/refreshed.dart';
 
@@ -50,6 +53,9 @@ class AgentExecutor {
           break;
         case 'open_diary':
           await _execOpenDiary(task);
+          break;
+        case 'nightly_review':
+          await _execNightlyReview(task);
           break;
       }
       final after = await AgentTaskStore.byId(task.id);
@@ -376,6 +382,196 @@ $buf''';
       task.feedback = [...task.feedback, '[执行] 分析失败（未标记已读，可重试）: $e'];
       await AgentTaskStore.update(task);
     }
+  }
+
+  /// 0 点归位：梳理刚结束的这一天。
+  ///
+  /// 确定性每日例行（不经大脑规划），由 BrainService 每天 0 点后创建：
+  /// 读当天未读日记 + 使用时间线 + 用户任务板块 → AI 产出画像增量 + 温柔复盘 →
+  /// 沉淀画像、标记日记已读、把复盘存为「待读」，用户下次打开助手页时看到。
+  /// 不跳页不语音：0 点归位是安静动作，复盘在用户主动打开对话时才呈现。
+  static Future<void> _execNightlyReview(AgentTask task) async {
+    final provider = AiProviderManager().currentProvider;
+    final now = DateTime.now();
+    final day = DateTime(now.year, now.month, now.day)
+        .subtract(const Duration(days: 1));
+    final dateLabel = '${day.month}月${day.day}日';
+
+    if (provider == null || !provider.isConfigured) {
+      // AI 未配置：不标记已读（日记留给以后分析），只安静结束任务
+      task.status = 'done';
+      task.feedback = [...task.feedback, '[归位] AI 未配置，跳过归位（未读日记保留）'];
+      await AgentTaskStore.update(task);
+      return;
+    }
+
+    // 1. 收集素材（纯本地数据，不打扰）
+    final unread = await _unreadDiariesForDay(day);
+    final timeline = await _usageTimelineText(day);
+    final pendingTasks = await _pendingTaskText();
+    final profile = await MemoryService.getProfile();
+
+    // 2. 组装提示词（角色卡保证是温晚照本人在复盘）
+    final base = await AiPromptManager().loadPrompt('nightly_review.txt');
+    final persona = await AiPromptManager().loadPersona();
+    final system = [
+      if (persona.isNotEmpty) '【角色卡】\n$persona',
+      base,
+    ].join('\n\n');
+
+    final material = StringBuffer()..writeln('【归位日期】$dateLabel');
+    if (unread.isEmpty) {
+      material.writeln('\n【当天的日记】这天没有写日记。');
+    } else {
+      material.writeln('\n【当天的日记】');
+      String fmtHM(DateTime t) =>
+          '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+      for (final d in unread) {
+        final mood = ' 心情${(d.mood * 10).round()}/10';
+        final title = d.title.isNotEmpty ? '《${d.title}》' : '(无标题)';
+        final content = d.contentText.length > 300
+            ? '${d.contentText.substring(0, 300)}…'
+            : d.contentText;
+        material.writeln('--- ${fmtHM(d.time)} $title$mood ---');
+        if (content.isNotEmpty) material.writeln(content);
+        material.writeln();
+      }
+    }
+    material
+      ..writeln('\n【当天的使用时间线】（手机使用记录，用于推断作息与行为逻辑）')
+      ..writeln(timeline.isEmpty ? '（无使用记录）' : timeline)
+      ..writeln('\n【用户任务板块（未完成）】')
+      ..writeln(pendingTasks.isEmpty ? '（无未完成任务）' : pendingTasks)
+      ..writeln('\n【当前画像】（已有认知，新的不要重复）')
+      ..writeln(profile.isEmpty ? '（暂无）' : profile);
+
+    // 3. 调用模型
+    final stream = await provider.chat(messages: [
+      AIMessage(role: 'system', content: system),
+      AIMessage(role: 'user', content: material.toString()),
+    ]);
+    final sb = StringBuffer();
+    await for (final chunk in stream) {
+      sb.write(chunk);
+    }
+    final raw = sb.toString().trim();
+    if (raw.isEmpty) throw Exception('模型未返回内容');
+
+    final (profileAdds, review) = _parseNightlyReview(raw);
+
+    // 4. 落地：沉淀画像 → 标记已读 → 存复盘待读
+    final fb = StringBuffer('[归位] 已梳理 $dateLabel');
+    if (profileAdds.isNotEmpty) {
+      await MemoryService.mergeAspects(profileAdds, source: 'diary_analysis');
+      fb.write('，沉淀画像 ${profileAdds.length} 条');
+    }
+    await DiaryAiReadStore.markReadAll(unread,
+        note: profileAdds.take(2).join('；'));
+    if (review.isNotEmpty) {
+      await _storeNightReview(day, review);
+      fb.write('，留下当晚复盘');
+    }
+    task.status = 'done';
+    task.feedback = [...task.feedback, fb.toString()];
+    await AgentTaskStore.update(task);
+  }
+
+  /// 把当晚复盘存为「待读」，用户下次打开助手页时注入。
+  static Future<void> _storeNightReview(DateTime day, String content) async {
+    await PrefUtil.setValue<String>(
+      'nightlyReview',
+      jsonEncode({
+        'date': '${day.year}-${day.month}-${day.day}',
+        'content': content,
+      }),
+    );
+  }
+
+  /// 某一天的未读日记（正序还原一天经过）。
+  static Future<List<Diary>> _unreadDiariesForDay(DateTime day) async {
+    final dayStart = DateTime(day.year, day.month, day.day);
+    final dayEnd =
+        dayStart.add(const Duration(hours: 23, minutes: 59, seconds: 59));
+    final all = await IsarUtil.getDiariesByDateRange(dayStart, dayEnd);
+    final read = await DiaryAiReadStore.load();
+    return all.where((d) => d.show && !read.containsKey(d.id)).toList()
+      ..sort((a, b) => a.time.compareTo(b.time));
+  }
+
+  /// 一天的使用时间线文本（合并相邻碎片，供归位推断作息与行为逻辑）。
+  static Future<String> _usageTimelineText(DateTime day) async {
+    try {
+      final sessions = await IsarUtil.getUsageSessionsByDay(
+          '${day.year}/${day.month}/${day.day}');
+      if (sessions.isEmpty) return '';
+      String fmtHM(DateTime t) =>
+          '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+      String fmtDur(int ms) {
+        final m = (ms / 60000).round();
+        if (m < 1) return '<1分钟';
+        return m < 60 ? '$m分钟' : '${m ~/ 60}小时${m % 60}分钟';
+      }
+
+      final buf = StringBuffer();
+      for (final s in mergeAdjacentSessions(sessions)) {
+        final end = s.isOpen ? '现在' : fmtHM(s.end!);
+        final app = s.appName.isEmpty ? s.packageName : s.appName;
+        buf.writeln('- ${fmtHM(s.start)}~$end $app（${fmtDur(s.durationMs)}）');
+      }
+      return buf.toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 用户「任务管理」分类下未完成的任务文本。
+  static Future<String> _pendingTaskText() async {
+    try {
+      final cats = await IsarUtil.getAllCategoryAsync();
+      final taskCat =
+          cats.where((c) => c.categoryName == '任务管理').toList();
+      if (taskCat.isEmpty) return '';
+      final cat = taskCat.first;
+      final now = DateTime.now();
+      final all = await IsarUtil.getDiariesByDateRange(
+          now.subtract(const Duration(days: 30)), now);
+      final pending = all
+          .where((d) =>
+              d.show && d.categoryId == cat.id && !d.tags.contains('完成'))
+          .toList()
+        ..sort((a, b) => a.time.compareTo(b.time));
+      if (pending.isEmpty) return '';
+      final buf = StringBuffer();
+      for (final d in pending.take(20)) {
+        final title = d.title.isNotEmpty ? d.title : '(无标题)';
+        buf.writeln('- $title（${d.time.month}月${d.time.day}日）');
+      }
+      return buf.toString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 解析归位输出：`{"profile":["[类别] 要点"],"review":"温柔复盘"}`。
+  static (List<String>, String) _parseNightlyReview(String raw) {
+    final profile = <String>[];
+    String text = raw.trim();
+    text = text.replaceFirst(RegExp(r'^```(json)?\s*'), '').trim();
+    text = text.replaceFirst(RegExp(r'\s*```$'), '').trim();
+    final start = text.indexOf('{');
+    final end = text.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        final m = jsonDecode(text.substring(start, end + 1)) as Map;
+        if (m['profile'] is List) {
+          profile.addAll((m['profile'] as List).whereType<String>());
+        }
+        return (profile, m['review']?.toString().trim() ?? '');
+      } catch (_) {
+        // fallthrough → 整个文本视为复盘，不丢内容
+      }
+    }
+    return (profile, text);
   }
 
   /// 解析 analyze_diaries 输出，宽容处理 ```json 围栏与前后杂文。

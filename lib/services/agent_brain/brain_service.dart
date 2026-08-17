@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/utils/notice_util.dart';
 
 import 'agent_executor.dart';
@@ -56,6 +57,8 @@ class BrainService {
     if (_busy) return;
     _busy = true;
     try {
+      // 每日例行（确定性，不经大脑决策）：0 点后创建夜间归位任务
+      await _checkNightlyReview();
       await _dispatchDueTasks();
       await _watchdogRunning();
       await _monitor.checkSignals();
@@ -63,6 +66,44 @@ class BrainService {
       print('[BrainService] tick error: $e');
     } finally {
       _busy = false;
+    }
+  }
+
+  /// 每日例行「0 点归位」的确定性调度（不进大脑决策，可靠不靠 AI 自觉）。
+  ///
+  /// 每天 00:00 之后第一次 tick（App 存活时）创建一次 nightly_review 任务，
+  /// scheduledAt=now 到点立即派发，梳理「刚结束的那一天」。用 PrefUtil 记录
+  /// 跨天防重复；当天已存在 pending/running 的归位任务（如派发失败待重试）
+  /// 也视为已调度，避免每 tick 重复创建。
+  Future<void> _checkNightlyReview() async {
+    try {
+      final now = DateTime.now();
+      final today = '${now.year}-${now.month}-${now.day}';
+      final last = PrefUtil.getValue<String>('nightlyReviewLastAt') ?? '';
+      if (last == today) return;
+
+      final existing = await AgentTaskStore.query(action: 'nightly_review');
+      final todayCreated = existing.any((t) {
+        final c = t.createdAt;
+        return '${c.year}-${c.month}-${c.day}' == today &&
+            (t.status == 'pending' || t.status == 'running');
+      });
+      if (todayCreated) {
+        await PrefUtil.setValue<String>('nightlyReviewLastAt', today);
+        return;
+      }
+
+      await AgentTaskStore.add(AgentTask(
+        title: '夜间归位：梳理今天',
+        kind: 'scheduled',
+        action: 'nightly_review',
+        scheduledAt: now,
+        priority: 2,
+      ));
+      await PrefUtil.setValue<String>('nightlyReviewLastAt', today);
+      print('[BrainService] 已创建夜间归位任务（$today）');
+    } catch (e) {
+      print('[BrainService] 夜间归位调度失败: $e');
     }
   }
 
@@ -98,10 +139,12 @@ class BrainService {
       try {
         await AgentExecutor.execute(task);
         // 不带自有 UI 的动作（语音/画像沉淀/日记分析）用 toast 让执行可见；
-        // start_chat / ask_user / block_screen 自身会跳页/播报，不再重复弹。
+        // start_chat / ask_user / block_screen 自身会跳页/播报，不再重复弹；
+        // nightly_review（夜间归位）是安静例行，复盘在用户打开助手页时呈现，不弹。
         if (task.action != 'start_chat' &&
             task.action != 'ask_user' &&
-            task.action != 'block_screen') {
+            task.action != 'block_screen' &&
+            task.action != 'nightly_review') {
           NoticeUtil.showToast('智能体已执行：「${task.title}」');
         }
         // 执行器已写终态。若仍为 running 且非阻断页，兜底置 done。

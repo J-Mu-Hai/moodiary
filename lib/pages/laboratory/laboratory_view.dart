@@ -297,6 +297,13 @@ class _BrainSectionState extends State<_BrainSection> {
     await _showResult('大脑决策结果', result);
   }
 
+  /// 手动执行一次夜间归位（直接跑归位执行器，验证行为逻辑梳理+复盘）。
+  Future<void> _runNightly() async {
+    final result = await logic.runNightlyReview();
+    await _refresh();
+    await _showResult('夜间归位', result);
+  }
+
   Future<void> _addRule() async {
     final res = await showTextInputDialog(
       context: context,
@@ -633,6 +640,16 @@ class _BrainSectionState extends State<_BrainSection> {
                 avatar: const Icon(Icons.hourglass_bottom, size: 16),
                 label: const Text('模拟长期计划回访'),
                 onPressed: () => _trigger('longterm_overdue'),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.task_alt, size: 16),
+                label: const Text('模拟任务停滞'),
+                onPressed: () => _trigger('task_stall'),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.nightlight_round, size: 16),
+                label: const Text('立即归位'),
+                onPressed: _runNightly,
               ),
             ],
           ),

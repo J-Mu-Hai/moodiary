@@ -122,6 +122,9 @@ class PrefUtil {
     'brainDecisionLog',
     // 日记「是否被 AI 读过」侧表（diary_ai_read.dart）
     'diaryAiRead',
+    // 夜间归位：待读复盘消息 / 上次归位日期（agent_executor / brain_service）
+    'nightlyReview',
+    'nightlyReviewLastAt',
   };
 
   static Future<void> initPref() async {
