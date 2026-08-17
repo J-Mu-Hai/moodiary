@@ -13,6 +13,33 @@ import 'package:flutter/services.dart';
 /// 非 Android 平台直接 no-op，避免桌面端崩溃。
 class AgentChannel {
   static const MethodChannel _channel = MethodChannel('moodiary/agent');
+  static const MethodChannel _usageChannel = MethodChannel('moodiary/usage');
+
+  /// 查询当前前台应用包名（智能体实时感知 app_switched / 专注监督用）。
+  ///
+  /// 依赖 Android「使用情况访问」权限；未授权或非 Android 返回 null。
+  static Future<String?> currentForegroundApp() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _usageChannel
+          .invokeMethod<String>('getCurrentForegroundPackage');
+    } catch (e) {
+      print('[AgentChannel] currentForegroundApp 失败: $e');
+      return null;
+    }
+  }
+
+  /// 按包名解析应用名；解析失败返回 null（调用方兜底为包名）。
+  static Future<String?> appLabel(String package) async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _usageChannel
+          .invokeMethod<String>('getAppLabel', {'packageName': package});
+    } catch (e) {
+      print('[AgentChannel] appLabel 失败: $e');
+      return null;
+    }
+  }
 
   /// 把 moodiary 带回前台。
   static Future<void> bringToFront() async {

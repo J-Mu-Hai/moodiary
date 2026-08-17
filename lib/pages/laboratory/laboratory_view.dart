@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:adaptive_dialog/adaptive_dialog.dart';
@@ -7,7 +8,10 @@ import 'package:moodiary/common/models/ai_provider.dart';
 import 'package:moodiary/main.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/agent_brain/agent_task.dart';
+import 'package:moodiary/services/agent_brain/behavior_observations.dart';
+import 'package:moodiary/services/agent_brain/daily_rhythm.dart';
 import 'package:moodiary/utils/notice_util.dart';
+import 'package:moodiary/utils/webdav_util.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'laboratory_logic.dart';
@@ -244,7 +248,9 @@ class _BrainSection extends StatefulWidget {
 class _BrainSectionState extends State<_BrainSection> {
   final logic = Bind.find<LaboratoryLogic>();
   List<AgentTask> _tasks = [];
-  List<AgentTask> _doneTasks = [];
+  List<AgentTask> _basicTasks = [];
+  List<BehaviorObservation> _observations = [];
+  String _behaviorTemplate = '';
   List<String> _rules = [];
   Map<String, dynamic>? _decision;
   List<Map<String, dynamic>> _decisionLog = [];
@@ -257,15 +263,32 @@ class _BrainSectionState extends State<_BrainSection> {
   }
 
   Future<void> _refresh() async {
+    await _loadFromLocal();
+    // 先展示本地数据；再后台同步一次元数据（含大脑记录），完成后如有
+    // 变化再刷新一遍。这样手机实验室页触发信号后，电脑端打开实验室页也能
+    // 很快拉到最新的智能体输入/输出记录。
+    unawaited(WebDavUtil()
+        .syncMetadata()
+        .timeout(const Duration(seconds: 20), onTimeout: () {})
+        .then((_) {
+      if (mounted) _loadFromLocal();
+    }));
+  }
+
+  Future<void> _loadFromLocal() async {
     final tasks = await logic.loadActiveTasks();
-    final done = await logic.loadDoneTasks();
+    final basicTasks = await logic.loadBasicTasksToday();
+    final observations = await logic.loadBehaviorObservations();
+    final behaviorTemplate = await logic.behaviorTemplateText();
     final rules = await logic.loadRules();
     final decision = await logic.getLastBrainDecision();
     final decisionLog = await logic.getBrainDecisionLog();
     if (!mounted) return;
     setState(() {
       _tasks = tasks;
-      _doneTasks = done;
+      _basicTasks = basicTasks;
+      _observations = observations;
+      _behaviorTemplate = behaviorTemplate;
       _rules = rules;
       _decision = decision;
       _decisionLog = decisionLog;
@@ -332,6 +355,13 @@ class _BrainSectionState extends State<_BrainSection> {
 
   String _fmtHm(DateTime t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  /// 行为观察时长的紧凑格式。
+  String _obsDur(int ms) {
+    final m = (ms / 60000).round();
+    if (m < 1) return '<1分钟';
+    return m < 60 ? '$m分钟' : '${m ~/ 60}小时${m % 60}分钟';
+  }
 
   /// 任务类型的中文标签（immediate=即时 / scheduled=定时 / longterm=长期）。
   String _kindLabel(String kind) => switch (kind) {
@@ -487,22 +517,28 @@ class _BrainSectionState extends State<_BrainSection> {
       groups[key]!.add(rec);
     }
     return [
-      for (final key in order) ...[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
-          child: Text(
+      for (final key in order)
+        // 按日期折叠：只有最新一天默认展开，历史日期折叠成一行标题
+        ExpansionTile(
+          initiallyExpanded: key == order.first,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          shape: const Border(),
+          collapsedShape: const Border(),
+          leading: Icon(Icons.calendar_today_outlined,
+              size: 16, color: colorScheme.primary),
+          title: Text(
             _fmtDateTitle(groups[key]!.first) ?? key,
-            style: textStyle.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: colorScheme.primary,
-            ),
+            style: textStyle.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
+          subtitle: Text('${groups[key]!.length} 条记录',
+              style: textStyle.bodySmall
+                  ?.copyWith(color: colorScheme.onSurfaceVariant)),
+          children: [
+            ...groups[key]!
+                .map((rec) => _recordTile(rec, colorScheme, textStyle)),
+            const Divider(height: 12),
+          ],
         ),
-        ...groups[key]!.map(
-          (rec) => _recordTile(rec, colorScheme, textStyle),
-        ),
-        const Divider(height: 12),
-      ],
     ];
   }
 
@@ -518,17 +554,24 @@ class _BrainSectionState extends State<_BrainSection> {
   Widget _recordTile(Map<String, dynamic> rec, ColorScheme colorScheme,
       TextTheme textStyle) {
     final isFeedback = rec['kind'] == 'feedback';
+    final isSkipped = rec['kind'] == 'signal_skipped';
     final noop = rec['noop'] == true;
     final t = DateTime.tryParse(rec['time']?.toString() ?? '');
     final icon = isFeedback
         ? Icons.chat_bubble_outline
-        : (noop ? Icons.info_outline : Icons.assignment_outlined);
+        : (isSkipped
+            ? Icons.timer_off_outlined
+            : (noop ? Icons.info_outline : Icons.assignment_outlined));
     final iconColor = isFeedback
         ? colorScheme.tertiary
-        : (noop ? colorScheme.tertiary : colorScheme.primary);
+        : (isSkipped
+            ? colorScheme.outline
+            : (noop ? colorScheme.tertiary : colorScheme.primary));
     final badge = isFeedback
         ? '反馈'
-        : (noop ? '无需行动' : '生成 ${rec['taskCount'] ?? 0} 个任务');
+        : (isSkipped
+            ? '已冷却跳过'
+            : (noop ? '无需行动' : '生成 ${rec['taskCount'] ?? 0} 个任务'));
     final summary = rec['summary']?.toString() ?? '';
 
     return Padding(
@@ -564,10 +607,10 @@ class _BrainSectionState extends State<_BrainSection> {
             ],
           ),
           _ExpandableText(
-              label: '输入（上下文/反馈）',
+              label: '输入（完整，未截断）',
               text: rec['input']?.toString() ?? ''),
           _ExpandableText(
-              label: '输出（决策/任务）',
+              label: '输出（完整，未截断）',
               text: rec['output']?.toString() ?? ''),
         ],
       ),
@@ -647,6 +690,36 @@ class _BrainSectionState extends State<_BrainSection> {
                 onPressed: () => _trigger('task_stall'),
               ),
               ActionChip(
+                avatar: const Icon(Icons.article_outlined, size: 16),
+                label: const Text('模拟日记写入'),
+                onPressed: () => _trigger('diary_written'),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.switch_access_shortcut, size: 16),
+                label: const Text('模拟切换App'),
+                onPressed: () => _trigger('app_switched'),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.wb_sunny_outlined, size: 16),
+                label: const Text('模拟早晨问候'),
+                onPressed: () => _trigger('morning_check_in'),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.wb_twilight, size: 16),
+                label: const Text('模拟中午询问'),
+                onPressed: () => _trigger('noon_check_in'),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.nights_stay_outlined, size: 16),
+                label: const Text('模拟傍晚询问'),
+                onPressed: () => _trigger('evening_check_in'),
+              ),
+              ActionChip(
+                avatar: const Icon(Icons.event_available_outlined, size: 16),
+                label: const Text('模拟明天计划'),
+                onPressed: () => _trigger('tomorrow_check_in'),
+              ),
+              ActionChip(
                 avatar: const Icon(Icons.nightlight_round, size: 16),
                 label: const Text('立即归位'),
                 onPressed: _runNightly,
@@ -701,7 +774,7 @@ class _BrainSectionState extends State<_BrainSection> {
                           ?.copyWith(color: colorScheme.onSurfaceVariant)),
                   const SizedBox(height: 4),
                   _ExpandableText(
-                      label: '输入（送进大脑的上下文）',
+                      label: '输入（完整：角色卡 + 指令 + 上下文）',
                       text: _decision!['input']?.toString() ?? ''),
                   _ExpandableText(
                       label: '输出（模型原始返回）',
@@ -775,42 +848,103 @@ class _BrainSectionState extends State<_BrainSection> {
                   ],
                 ),
               )),
+        // 今日基础任务：统一作息询问（上午/中午/晚上/明天）与复盘等确定性
+        // 日常例行，任意状态统一可见——「所有基础任务都在任务规划中」。
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text('任务执行记录（最近 10 条）', style: textStyle.titleSmall),
+          child: Text('今日基础任务（统一作息/复盘）', style: textStyle.titleSmall),
         ),
-        if (_doneTasks.isEmpty)
-          const ListTile(
-            dense: true,
-            title: Text('暂无已执行任务'),
-            subtitle: Text('任务执行完成或用户回应后，会记录到这里'),
+        if (_basicTasks.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+                '今日还没有基础任务：询问上午/中午/晚上/明天计划与 23:00 复盘会'
+                '在对应时间点自动创建到这里',
+                style: TextStyle(fontSize: 12)),
           )
         else
-          ..._doneTasks.map((t) => ListTile(
+          ..._basicTasks.map((t) {
+            final period = t.params['planPeriod']?.toString();
+            final label =
+                period != null && DailyRhythmStore.periodLabels.containsKey(period)
+                    ? DailyRhythmStore.periodLabels[period]!
+                    : '';
+            return ListTile(
+              dense: true,
+              onTap: () => _showTaskDetail(t),
+              leading: Icon(
+                t.status == 'waitingUser'
+                    ? Icons.mark_chat_unread_outlined
+                    : t.status == 'done'
+                        ? Icons.check_circle_outline
+                        : Icons.event_available_outlined,
+                size: 20,
+                color: t.status == 'done'
+                    ? colorScheme.outline
+                    : t.status == 'waitingUser'
+                        ? colorScheme.primary
+                        : colorScheme.tertiary,
+              ),
+              title: Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                '${label.isNotEmpty ? '$label · ' : ''}${_statusLabel(t.status)}'
+                ' · ${_fmtHm(t.createdAt)}'
+                '${t.scheduledAt != null ? ' @${_fmtHm(t.scheduledAt!)}' : ''}',
+                style: textStyle.bodySmall
+                    ?.copyWith(color: colorScheme.onSurfaceVariant),
+              ),
+            );
+          }),
+        // 行为观察（观察者积累）：时间段→在做什么→次数模板 + 最近观察明细，
+        // 让用户能评估观察者是否真实捕捉到自己的行为习惯。
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Text('行为观察（观察者积累的习惯）', style: textStyle.titleSmall),
+        ),
+        if (_behaviorTemplate.isNotEmpty &&
+            _behaviorTemplate != '（暂无模板）')
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text('常做行为模板：$_behaviorTemplate',
+                style: textStyle.bodySmall
+                    ?.copyWith(color: colorScheme.onSurfaceVariant)),
+          ),
+        if (_observations.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text('暂无观察：切换 App、完成专注/任务后，观察者会在这里积累',
+                style: TextStyle(fontSize: 12)),
+          )
+        else
+          ..._observations.take(15).map((o) => ListTile(
                 dense: true,
-                onTap: () => _showTaskDetail(t),
                 leading: Icon(
-                  Icons.done_all,
-                  size: 20,
-                  color: colorScheme.primary,
+                  o.event == '完成任务'
+                      ? Icons.task_alt
+                      : o.event == '专注结束'
+                          ? Icons.timer_off_outlined
+                          : o.event == '自我报告'
+                              ? Icons.record_voice_over_outlined
+                              : Icons.switch_account_outlined,
+                  size: 18,
+                  color: o.effect != null && o.effect! < 0.5
+                      ? colorScheme.error
+                      : colorScheme.primary,
                 ),
-                title:
-                    Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                title: Text('${o.timeRange} · ${o.activity}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
                 subtitle: Text(
-                  t.feedback.isEmpty
-                      ? '${_kindLabel(t.kind)} · ${t.status}'
-                      : '${_kindLabel(t.kind)} · ${t.feedback.last}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textStyle.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant),
-                ),
-                trailing: Text(
-                  _fmtHm(t.updatedAt),
-                  style: textStyle.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant),
+                  '${_fmtHm(o.time)} · ${o.event}'
+                  '${o.category.isNotEmpty ? ' · $o.category' : ''}'
+                  '${o.durationMs != null ? ' · ${_obsDur(o.durationMs!)}' : ''}'
+                  '${o.effect != null ? ' · 效果${(o.effect! * 10).round()}/10' : ''}'
+                  ' · 置信度${(o.confidence * 10).round()}/10',
+                  style: textStyle.bodySmall
+                      ?.copyWith(color: colorScheme.onSurfaceVariant),
                 ),
               )),
+        // 任务执行记录已按用户要求移除：执行细节可随时在任务详情里看，
+        // 实验室面板聚焦「大脑输入/输出」的复盘，不再展示已完成任务列表。
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
           child: Row(

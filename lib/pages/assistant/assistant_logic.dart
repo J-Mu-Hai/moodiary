@@ -12,16 +12,34 @@ import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/ai_functions.dart';
 import 'package:moodiary/services/ai_prompt_manager.dart';
 import 'package:moodiary/services/agent_brain/agent_brain.dart';
+import 'package:moodiary/services/agent_brain/focus_mode.dart';
 import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/services/reply_chunker.dart';
 import 'package:moodiary/services/typing_pacer.dart';
 import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/notice_util.dart';
+import 'package:moodiary/utils/webdav_util.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'assistant_state.dart';
 
 class AssistantLogic extends GetxController with WidgetsBindingObserver {
+  /// 聊天记录持久化键（跨会话记住对话，见 _loadChat/_persistChat）
+  static const String _chatPrefKey = 'assistantChat';
+
+  /// 最多持久化的消息条数（避免 SharedPreferences 无限膨胀，只留最近 60 条）
+  static const int _maxPersistMessages = 60;
+
+  /// 聊天页打开时的元数据轮询间隔：像聊天软件一样秒级收到另一端的新消息，
+  /// 而不是等 5 分钟定时器。
+  static const Duration _metaSyncInterval = Duration(seconds: 10);
+
+  /// 聊天页打开期间的元数据轮询定时器
+  Timer? _metaSyncTimer;
+
+  /// 上次见到的持久化聊天记录原文（用于判断远端是否来了新消息，避免无谓重建）
+  String? _lastChatJson;
+
   final AssistantState state = AssistantState();
 
   late TextEditingController textEditingController = TextEditingController();
@@ -49,6 +67,9 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
         if (height > heightList.last &&
             state.keyboardState != KeyboardState.opening) {
           state.keyboardState = KeyboardState.opening;
+          // 键盘弹起：等 AnimatedPadding 抽屉动画走完再滚到底，
+          // 让最后一条消息显示在键盘上方而不是被键盘盖住。
+          _scrollToBottomAfterKeyboard();
         } else if (height < heightList.last &&
             state.keyboardState != KeyboardState.closing) {
           state.keyboardState = KeyboardState.closing;
@@ -70,8 +91,53 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
   void onReady() {
     WidgetsBinding.instance.addObserver(this);
     _loadProvider();
+    _loadChat();
     _injectPendingReview();
+    // 聊天页打开期间每 10 秒轻量轮询一次，秒级收到另一端的新消息；
+    // 打开瞬间先完整同步一次（推+拉）并刷新消息。
+    _startMetaSyncTimer();
+    unawaited(_syncMetaNow().then((_) => _reloadChat()));
     super.onReady();
+  }
+
+  /// 加载上次保存的聊天记录（跨会话记住对话）。
+  void _loadChat() {
+    final s = PrefUtil.getValue<String>(_chatPrefKey);
+    _lastChatJson = s;
+    if (s == null || s.isEmpty) return;
+    try {
+      final list = jsonDecode(s) as List;
+      for (final e in list) {
+        if (e is! Map) continue;
+        final role = e['role']?.toString() ?? '';
+        final content = e['content']?.toString() ?? '';
+        if ((role == 'user' || role == 'assistant') && content.isNotEmpty) {
+          state.messages.add(AIMessage(
+            role: role,
+            content: content,
+            time: DateTime.tryParse(e['time']?.toString() ?? ''),
+          ));
+        }
+      }
+    } catch (_) {
+      // 记录损坏则放弃恢复，不阻塞聊天
+    }
+  }
+
+  /// 持久化聊天记录（只留最近 [maxPersistMessages] 条 user/assistant 消息）。
+  Future<void> _persistChat() async {
+    try {
+      final msgs = state.messages
+          .where((m) => m.role == 'user' || m.role == 'assistant')
+          .toList();
+      final keep = msgs.length > _maxPersistMessages
+          ? msgs.sublist(msgs.length - _maxPersistMessages)
+          : msgs;
+      await PrefUtil.setValue<String>(
+          _chatPrefKey, jsonEncode(keep.map((m) => m.toJson()).toList()));
+    } catch (e) {
+      print('[Assistant] 聊天记录持久化失败: $e');
+    }
   }
 
   /// 注入「夜间归位」留下的待读复盘：用户下次打开助手页时，以第一条
@@ -91,6 +157,7 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
         content: '$head$content',
       ));
       update();
+      _persistChatAndSync();
     } catch (_) {
       // 解析失败：已消费，不弹
     }
@@ -99,10 +166,73 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
   @override
   void onClose() {
     WidgetsBinding.instance.removeObserver(this);
+    _stopMetaSyncTimer();
     textEditingController.dispose();
     scrollController.dispose();
     focusNode.dispose();
+    // 离开聊天页时把最新聊天记录同步出去，另一端尽快看到对话。
+    unawaited(_syncMetaNow());
     super.onClose();
+  }
+
+  // ========== 元数据秒级同步（聊天页打开时） ==========
+
+  void _startMetaSyncTimer() {
+    _metaSyncTimer?.cancel();
+    _metaSyncTimer = Timer.periodic(_metaSyncInterval, (_) {
+      // 轻量轮询：只拉取远端变化，拉完刷新消息列表。
+      unawaited(_syncMetaNow(pullOnly: true).then((_) => _reloadChat()));
+    });
+  }
+
+  void _stopMetaSyncTimer() {
+    _metaSyncTimer?.cancel();
+    _metaSyncTimer = null;
+  }
+
+  /// 同步一次智能体元数据（聊天记录 / 画像 / 任务等）。
+  /// [pullOnly] 为 true 时只拉取远端变化，不推（聊天页定时轮询用）。
+  Future<void> _syncMetaNow({bool pullOnly = false}) async {
+    try {
+      if (WebDavUtil().hasOption) {
+        await WebDavUtil()
+            .syncMetadata(pullOnly: pullOnly)
+            .timeout(const Duration(seconds: 20), onTimeout: () {});
+      }
+    } catch (_) {}
+  }
+
+  /// 聊天记录落盘后立刻完整同步一次（推+拉），让另一端秒级收到消息。
+  void _persistChatAndSync() {
+    unawaited(_persistChat().then((_) => _syncMetaNow()));
+  }
+
+  /// 用持久化的最新聊天记录重建消息列表（轮询拉到远端新消息后调用）。
+  /// 正在流式回复时不打断，等下一轮；内容没变也不重建。
+  void _reloadChat() {
+    if (state.isTyping.value) return;
+    final s = PrefUtil.getValue<String>(_chatPrefKey);
+    if (s == null || s.isEmpty || s == _lastChatJson) return;
+    _lastChatJson = s;
+    try {
+      final list = jsonDecode(s) as List;
+      final newMsgs = <AIMessage>[];
+      for (final e in list) {
+        if (e is! Map) continue;
+        final role = e['role']?.toString() ?? '';
+        final content = e['content']?.toString() ?? '';
+        if ((role == 'user' || role == 'assistant') && content.isNotEmpty) {
+          newMsgs.add(AIMessage(
+            role: role,
+            content: content,
+            time: DateTime.tryParse(e['time']?.toString() ?? ''),
+          ));
+        }
+      }
+      state.messages.assignAll(newMsgs);
+      update();
+      WidgetsBinding.instance.addPostFrameCallback((_) => toBottom());
+    } catch (_) {}
   }
 
   /// 从配置加载 AI Provider
@@ -340,6 +470,7 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
       if (_session == mySession) {
         state.isTyping.value = false;
         update();
+        _persistChatAndSync(); // 整段回复稳定后落盘
       }
     }
     return chunker;
@@ -457,6 +588,8 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     state.isTyping.value = false;
     _systemInjected = false;
     update();
+    // 只清本地会话，不同步：否则会把空聊天推到服务器，抹掉另一端的历史。
+    unawaited(_persistChat());
   }
 
   void clearText() {
@@ -488,6 +621,7 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
       state.isTyping.value = true; // 建连阶段就亮"正在输入"
       update();
       toBottom();
+      _persistChatAndSync(); // 立刻落盘，避免中断时丢失用户消息
 
       // 智能体任务闭环：若有等待用户回应的任务，把这条消息作为反馈交给大脑。
       // 后台处理，不阻塞正常对话（不 double 串行等 AI 决策）。
@@ -495,6 +629,13 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
         unawaited(AgentBrain.processWaitingUserFeedback(ask));
       } catch (e) {
         print('[AgentBrain] 反馈处理失败: $e');
+      }
+
+      // 专注模式检测（纯对话入口）：「我要学习到晚上9点」开启 /「学完了」结束
+      try {
+        await FocusModeDetector.handle(ask);
+      } catch (e) {
+        print('[FocusMode] 检测失败: $e');
       }
 
       // 构建发送给 AI 的消息列表（连续同角色合并）
@@ -586,6 +727,21 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     if (scrollController.hasClients) {
       scrollController.jumpTo(scrollController.position.maxScrollExtent);
     }
+  }
+
+  /// 键盘弹起后滚动到底部：不能立刻滚——底部 AnimatedPadding 要 ~220ms
+  /// 才把内容顶到位，此刻 maxScrollExtent 还在动画中；等它结束再平滑滚到
+  /// 新的底部，最后一条消息就出现在键盘上方。
+  void _scrollToBottomAfterKeyboard() {
+    Future.delayed(const Duration(milliseconds: 260), () {
+      if (scrollController.hasClients) {
+        scrollController.animateTo(
+          scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   String getText() => textEditingController.text;

@@ -12,8 +12,11 @@ import 'package:moodiary/utils/environment_sensor.dart';
 
 import 'agent_rule.dart';
 import 'agent_task.dart';
+import 'behavior_observations.dart';
 import 'brain_reflect.dart';
 import 'brain_service.dart';
+import 'daily_rhythm.dart';
+import 'focus_mode.dart';
 
 /// 大脑信号 — 代码机械监督 / 用户规则 / 任务变化 送入大脑的输入。
 ///
@@ -43,10 +46,10 @@ class AgentBrain {
   /// 同类信号冷却时长（防止每个信号都烧一次 AI 调用）
   static const Duration signalCooldown = Duration(hours: 6);
 
-  /// 按日期回溯日志（brainDecisionLog）的容量与字段截断：
-  /// 开发阶段观察「智能体每天有什么输入/输出」，同时控制 SharedPreferences 体积。
-  static const int _logCapacity = 50;
-  static const int _logFieldLimit = 2500;
+  /// 按日期回溯日志（brainDecisionLog）只保留最近 3 天：
+  /// 记录完整输入/输出（不截断），开发阶段观察「智能体每天有什么输入/输出」，
+  /// 体积靠时间裁剪控制（满 3 天的旧记录随写入一并丢弃）。
+  static const Duration _logRetention = Duration(days: 3);
 
   /// 大脑可规划的合法动作（与 AgentExecutor 分发一致）
   static const List<String> validActions = [
@@ -71,11 +74,33 @@ class AgentBrain {
   static Future<String> handleSignal(BrainSignal signal,
       {bool force = false}) async {
     if (!force && await _isCoolingDown(signal.type)) {
-      return '信号 ${signal.type} 冷却中，跳过（6 小时内不重复处理）';
+      // 冷却命中也要落日志：让实验室面板能看到「每一次输入都到了大脑」，
+      // 直接回应「为什么这个输入没有变成输出」。
+      final cd = _cooldownFor(signal.type);
+      final window =
+          cd.inHours >= 24 ? '${cd.inDays} 天' : '${cd.inMinutes} 分钟';
+      await _appendLog({
+        'kind': 'signal_skipped',
+        'time': DateTime.now().toIso8601String(),
+        'signalType': signal.type,
+        'summary': '信号到达但冷却中，跳过',
+        'input': signal.summary,
+        'output': '同类信号 $window 内已处理过，本次不重复决策（冷却保护）。',
+      });
+      return '信号 ${signal.type} 冷却中，跳过（$window 内不重复处理）';
     }
 
     final provider = AiProviderManager().currentProvider;
     if (provider == null || !provider.isConfigured) {
+      // AI 未配置也要落日志：否则任何信号都像「没来过」，用户无从排查。
+      await _appendLog({
+        'kind': 'signal_skipped',
+        'time': DateTime.now().toIso8601String(),
+        'signalType': signal.type,
+        'summary': '信号到达，但 AI 未配置，无法决策',
+        'input': signal.summary,
+        'output': 'AI 未配置（provider 为空/未配置），跳过大脑决策。请先在设置里配置 AI。',
+      });
       print('[AgentBrain] AI 未配置，跳过信号 ${signal.type}');
       return 'AI 未配置，跳过大脑决策';
     }
@@ -148,7 +173,9 @@ class AgentBrain {
         .toList();
     await _recordDecision(
       signal,
-      input: context,
+      // 记录完整输入：角色卡 + brain_plan 指令 + 本次决策上下文，
+      // 实验室面板能据此复盘「大脑到底收到了什么」。
+      input: system,
       output: raw,
       noop: parsed.noop,
       reason: parsed.reason,
@@ -161,9 +188,10 @@ class AgentBrain {
 
   /// 记录一次大脑决策的完整输入/输出到 PrefUtil（key=brainLastDecision）。
   ///
-  /// 实验室页据此展示「送进大脑的上下文」与「模型原始输出」，让用户
+  /// 实验室页据此展示「送进大脑的完整输入」与「模型原始输出」，让用户
   /// 能验证输入是否真正成功、决策依据是什么。
-  /// 同时把本次决策追加进按日期回溯的历史日志（key=brainDecisionLog）。
+  /// 同时把本次决策（完整输入/输出，不截断）追加进按日期回溯的历史日志
+  /// （key=brainDecisionLog），日志只保留最近 3 天。
   static Future<void> _recordDecision(
     BrainSignal signal, {
     required String input,
@@ -197,12 +225,13 @@ class AgentBrain {
       'reason': reason,
       'taskCount': taskCount,
       'taskTitles': taskTitles,
-      'input': _truncate(input),
-      'output': _truncate(output),
+      'input': input,
+      'output': output,
     });
   }
 
-  /// 把一条输入/输出记录追加进历史日志（新→旧），超容量裁剪最旧的。
+  /// 把一条输入/输出记录追加进历史日志（新→旧），只保留最近 3 天
+  /// （按 time 字段裁剪，超期的旧记录随本次写入一并丢弃）。
   static Future<void> _appendLog(Map<String, dynamic> record) async {
     const key = 'brainDecisionLog';
     var list = <dynamic>[];
@@ -216,18 +245,25 @@ class AgentBrain {
       }
     }
     list.insert(0, record);
-    if (list.length > _logCapacity) list = list.sublist(0, _logCapacity);
+    final cutoff = DateTime.now().subtract(_logRetention);
+    list = list.where((r) {
+      if (r is! Map) return false;
+      final t = DateTime.tryParse(r['time']?.toString() ?? '');
+      return t == null || t.isAfter(cutoff);
+    }).toList();
     await PrefUtil.setValue<String>(key, jsonEncode(list));
   }
-
-  /// 超长字段截断（保留可读信息，控制日志体积）。
-  static String _truncate(String s, [int limit = _logFieldLimit]) =>
-      s.length <= limit ? s : '${s.substring(0, limit)}…[截断]';
 
   /// 处理用户对某个任务的反馈：写入反馈 → AI 决定「结束 / 继续等待」。
   static Future<String> processFeedback(String taskId, String feedback) async {
     final task = await AgentTaskStore.byId(taskId);
     if (task == null) return '任务不存在: $taskId';
+
+    // 专注模式：反馈里可能含「开始学习 / 学完了」等专注声明（纯对话入口）
+    unawaited(FocusModeDetector.handle(feedback));
+
+    // 统一作息：回答「计划采集」询问（ask_user 带 planPeriod）→ 计划/完成落库
+    await _capturePlanFeedback(task, feedback);
 
     task.feedback = [...task.feedback, '[${_hm(DateTime.now())}] $feedback'];
     await AgentTaskStore.update(task);
@@ -308,6 +344,21 @@ ${task.feedback.join('\n')}
       'output': '大脑判定：已解决${reason.isNotEmpty ? '（$reason）' : ''}'
           '${insight.isNotEmpty ? '· 沉淀画像：$insight' : ''}',
     });
+    // 行为观察：反馈评价了「效果/感觉/顺利」→ 记录效果与任务契合度。
+    // 简化 v1：仅识别含评价词的反馈，粗分正面/负面。
+    if (RegExp(r'(效果|感觉|顺利|还不错|挺有效|有用|没用|不行|很烂|不顺利)')
+        .hasMatch(feedback)) {
+      final bad = RegExp(r'(没用|不行|很烂|不顺利)').hasMatch(feedback);
+      await BehaviorObservationStore.record(
+        event: '完成任务',
+        activity: task.title,
+        taskId: task.id,
+        taskTitle: task.title,
+        effect: bad ? 0.2 : 0.8,
+        taskFit: bad ? 0.3 : 0.7,
+        confidence: 0.5,
+      );
+    }
     // 反思学习回路：有用户回应的任务（ask_user/start_chat）复盘沉淀画像
     unawaited(BrainReflect.maybeReflect(task));
     return '任务「${task.title}」已结束${insight.isNotEmpty ? '（$insight）' : ''}';
@@ -320,6 +371,40 @@ ${task.feedback.join('\n')}
     if (waiting.isEmpty) return null;
     final oldest = waiting.first; // query 按 priority 降序、createdAt 升序 → 最早创建
     return await processFeedback(oldest.id, userMessage);
+  }
+
+  /// 处理「计划采集」ask_user 的回答：写入统一作息库（DailyRhythmStore）。
+  ///
+  /// 回答含明确完成/未完成词 → 标记该时段完成态；其余 → 存为该时段计划内容。
+  /// 启发式 v1：避免把"打算完成论文"这类计划误判成完成（只认结果型措辞）。
+  static Future<void> _capturePlanFeedback(
+      AgentTask task, String feedback) async {
+    final period = task.params['planPeriod']?.toString();
+    if (period == null || period.isEmpty) return;
+    if (!DailyRhythmStore.periods.contains(period)) return;
+    final text = feedback.trim();
+    if (text.isEmpty) return;
+
+    // 明天计划是展望：只存内容，不做「完成/未完成」标记（明天还没到）
+    if (period == 'tomorrow') {
+      await DailyRhythmStore.setPeriodPlan(period, text);
+      print('[DailyRhythm] tomorrow 计划: $text');
+      return;
+    }
+
+    if (RegExp(r'(做完了|完成了|搞定了|弄完了|收工|写完了|背完了|已经.{0,4}(做完|完成|搞定))')
+        .hasMatch(text)) {
+      await DailyRhythmStore.markPeriodDone(period, true);
+      print('[DailyRhythm] $period 完成确认');
+    } else if (RegExp(
+            r'(没做完|没完成|还没做完|还没完成|拖延|没搞定|没弄完)')
+        .hasMatch(text)) {
+      await DailyRhythmStore.markPeriodDone(period, false);
+      print('[DailyRhythm] $period 未完成确认');
+    } else {
+      await DailyRhythmStore.setPeriodPlan(period, text);
+      print('[DailyRhythm] $period 计划: $text');
+    }
   }
 
   // ─── 上下文组装 ───────────────────────────────────────
@@ -378,6 +463,32 @@ ${task.feedback.join('\n')}
       }
     }
     buf.writeln();
+
+    // 行为观察：当前时段的常做行为模板 + 最近观察，让大脑决策有
+    // 「用户此刻行为模式 + 历史契合度」依据（行为习惯模板的地基）。
+    try {
+      final obsText = await BehaviorObservationStore.recentText(limit: 3);
+      final tmpl = await BehaviorObservationStore.topBehaviorsText(now);
+      buf.writeln('【行为观察】');
+      buf.writeln('常做行为模板：$tmpl');
+      buf.writeln('最近观察：$obsText');
+      buf.writeln();
+    } catch (_) {
+      buf.writeln();
+    }
+
+    // 今日作息与计划：起床时间 / 三时段计划与完成 / 每日计划栏目快照。
+    // 每次决策都看到"今天的计划与完成情况"，这是统一作息管理的核心诉求
+    // （所有任务都在任务规划中呈现）。
+    try {
+      await DailyRhythmStore.refreshBoard();
+      final rhythm = await DailyRhythmStore.summaryText();
+      buf.writeln('【今日作息与计划】');
+      buf.writeln(rhythm.isEmpty ? '（暂无数据）' : rhythm);
+      buf.writeln();
+    } catch (_) {
+      buf.writeln();
+    }
 
     final rules = await AgentRuleStore.load();
     if (rules.isEmpty) {
@@ -482,6 +593,21 @@ ${task.feedback.join('\n')}
 
   // ─── 冷却 ─────────────────────────────────────────────
 
+  /// 每类信号的冷却覆盖：高频实时信号给短冷却（保证入脑但不烧 AI），
+  /// 定时询问给一天一次（当天不重复）；其余默认 [signalCooldown]。
+  static Duration _cooldownFor(String type) {
+    const overrides = <String, Duration>{
+      // 日记写完/修改都算即时输入：5 分钟冷却让每次改动都尽量入脑
+      'diary_written': Duration(minutes: 5),
+      'app_switched': Duration(minutes: 10),
+      'morning_check_in': Duration(days: 1),
+      'noon_check_in': Duration(days: 1),
+      'evening_check_in': Duration(days: 1),
+      'tomorrow_check_in': Duration(days: 1),
+    };
+    return overrides[type] ?? signalCooldown;
+  }
+
   static Future<bool> _isCoolingDown(String type) async {
     final c = await _loadCooldowns();
     final last = c[type];
@@ -489,7 +615,7 @@ ${task.feedback.join('\n')}
     return DateTime.now()
             .difference(DateTime.fromMillisecondsSinceEpoch(last))
             .inMilliseconds <
-        signalCooldown.inMilliseconds;
+        _cooldownFor(type).inMilliseconds;
   }
 
   static Future<void> _markHandled(String type) async {

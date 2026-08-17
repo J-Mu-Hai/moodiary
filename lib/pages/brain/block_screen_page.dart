@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:moodiary/services/agent_brain/agent_task.dart';
+import 'package:moodiary/services/agent_brain/behavior_observations.dart';
 import 'package:moodiary/services/agent_brain/brain_reflect.dart';
 import 'package:moodiary/utils/agent_channel.dart';
 import 'package:refreshed/refreshed.dart';
@@ -107,6 +108,16 @@ class _BlockScreenPageState extends State<BlockScreenPage> {
         print('[BlockScreen] 反馈写回失败: $e');
       }
     }
+    // 行为观察：锁屏结果（等到结束 → effect 高；提前离开 → effect 低）
+    final waitedToEnd = feedback.contains('阻断时间到');
+    unawaited(BehaviorObservationStore.record(
+      event: '完成任务',
+      activity: '强制锁屏：$_title',
+      taskId: _taskId,
+      taskTitle: _title,
+      effect: waitedToEnd ? 1.0 : 0.2,
+      confidence: 0.7,
+    ));
   }
 
   String get _mmss {

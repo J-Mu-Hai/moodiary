@@ -9,9 +9,14 @@ class AIMessage {
   final String role; // 'user' | 'assistant' | 'system'
   final String content;
 
-  AIMessage({required this.role, required this.content});
+  /// 消息时间（默认发送时刻；聊天记录持久化后恢复）
+  final DateTime time;
 
-  Map<String, dynamic> toJson() => {'role': role, 'content': content};
+  AIMessage({required this.role, required this.content, DateTime? time})
+      : time = time ?? DateTime.now();
+
+  Map<String, dynamic> toJson() =>
+      {'role': role, 'content': content, 'time': time.toIso8601String()};
 }
 
 /// AI 提供商的配置

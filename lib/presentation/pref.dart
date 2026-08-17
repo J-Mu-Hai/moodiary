@@ -97,10 +97,6 @@ class PrefUtil {
     // Expense
     'customExpenseCategories',
     'monthlyBudget',
-    // 账本月预算（单位：分）
-    'monthlyBudget',
-    // 账本自定义分类（JSON 字符串列表）
-    'customExpenseCategories',
     // 隐藏导航栏图标（桌面端）
     'hideNavigatorIcons',
     // 持续监督开关（屏幕使用时间）
@@ -122,9 +118,27 @@ class PrefUtil {
     'brainDecisionLog',
     // 日记「是否被 AI 读过」侧表（diary_ai_read.dart）
     'diaryAiRead',
+    // 行为观察时序库（behavior_observations.dart）：
+    // 时间段→在做什么→效果→和哪件任务契合，90 天滚动保留
+    'behaviorObservations',
+    // 专注模式状态（focus_mode.dart）
+    'focusMode',
+    // App 专注分类覆盖表 {关键词: focus|distract|neutral}
+    'appFocusOverrides',
     // 夜间归位：待读复盘消息 / 上次归位日期（agent_executor / brain_service）
     'nightlyReview',
     'nightlyReviewLastAt',
+    // 定时询问（早晨/中午/傍晚）当天触发标记（agent_monitor _checkInFiredToday）
+    'brainCheckInsFired',
+    // 反思学习节流（brain_reflect _throttleKey）
+    'brainReflectLastAt',
+    // 统一作息库：起床时间/三时段计划/完成情况/每日计划栏目快照（daily_rhythm.dart）
+    'dailyRhythm',
+    // 助手页聊天记录（跨会话持久化，见 assistant_logic）
+    'assistantChat',
+    // 智能体元数据同步：本地"上次应用的服务器标记"（key → mtime，见
+    // webdav_util.syncMetadata，用于判断另一端是否又改了）
+    'metaSyncStamp',
   };
 
   static Future<void> initPref() async {

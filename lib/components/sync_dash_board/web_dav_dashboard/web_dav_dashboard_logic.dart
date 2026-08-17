@@ -116,6 +116,8 @@ class WebDavDashboardLogic extends GetxController {
     }, onComplete: () {
       NoticeUtil.showToast(l10n.webdavSyncSuccess);
     });
+    // 手动同步时顺手把画像 / 任务 / 聊天记录等关键元数据也同步一遍。
+    await WebDavUtil().syncMetadata();
   }
 
   void checkIsUploading() {

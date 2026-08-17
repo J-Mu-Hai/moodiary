@@ -8,6 +8,7 @@ import 'package:moodiary/services/agent_brain/agent_brain.dart';
 import 'package:moodiary/services/agent_brain/agent_executor.dart';
 import 'package:moodiary/services/agent_brain/agent_rule.dart';
 import 'package:moodiary/services/agent_brain/agent_task.dart';
+import 'package:moodiary/services/agent_brain/behavior_observations.dart';
 import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/utils/aes_util.dart';
 import 'package:moodiary/utils/environment_sensor.dart';
@@ -172,12 +173,27 @@ class LaboratoryLogic extends GetxController {
     return [...pending, ...running, ...waiting];
   }
 
-  /// 已执行任务（最近 10 条，按 updatedAt 倒序），供「任务执行记录」区块展示。
-  Future<List<AgentTask>> loadDoneTasks() async {
-    final done = await AgentTaskStore.query(status: 'done');
-    done.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    return done.take(10).toList();
+  /// 今日「基础任务」：统一作息与复盘等确定性日常例行（带 params.basicTask
+  /// 标记），任意状态都展示，让当天的基础任务规划在实验室里统一可见。
+  Future<List<AgentTask>> loadBasicTasksToday() async {
+    final all = await AgentTaskStore.load();
+    final now = DateTime.now();
+    final today = '${now.year}-${now.month}-${now.day}';
+    return all.where((t) {
+      final c = t.createdAt;
+      if ('${c.year}-${c.month}-${c.day}' != today) return false;
+      return t.params['basicTask'] == true;
+    }).toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
+
+  /// 观察者积累的行为观察（时间段→在做什么→效果），新→旧。
+  Future<List<BehaviorObservation>> loadBehaviorObservations() =>
+      BehaviorObservationStore.recent(limit: 40);
+
+  /// 常做行为模板文本（时间段→App→次数），供评估观察者效果。
+  Future<String> behaviorTemplateText() =>
+      BehaviorObservationStore.topBehaviorsText(DateTime.now(), top: 4);
 
   /// 手动触发一类信号（force 跳过冷却），返回大脑决策结果。
   Future<String> triggerBrainSignal(String type) async {
@@ -216,6 +232,42 @@ class LaboratoryLogic extends GetxController {
         type: 'task_stall',
         summary: '【手动测试】模拟用户任务板块停滞信号（有任务多日未更新）。',
         data: {'manual': true, 'titles': ['（示例任务）'], 'stallDays': 3},
+      ),
+      'diary_written': BrainSignal(
+        type: 'diary_written',
+        summary: '【手动测试】模拟用户刚写完一篇日记《测试日记》：今天天气不错，出去走了走。',
+        data: {'manual': true, 'title': '测试日记', 'snippet': '今天天气不错，出去走了走'},
+      ),
+      'app_switched': BrainSignal(
+        type: 'app_switched',
+        summary: '【手动测试】模拟用户切换到 抖音（类别：短视频，专注属性：distract）。',
+        data: {
+          'manual': true,
+          'package': 'com.ss.android.ugc.aweme',
+          'appName': '抖音',
+          'category': '短视频',
+          'focusClass': 'distract',
+        },
+      ),
+      'morning_check_in': BrainSignal(
+        type: 'morning_check_in',
+        summary: '【手动测试】模拟早晨主动问候信号（用户今天第一次开始用手机）。',
+        data: {'manual': true},
+      ),
+      'noon_check_in': BrainSignal(
+        type: 'noon_check_in',
+        summary: '【手动测试】模拟中午 12-14 点定时主动询问信号。',
+        data: {'manual': true},
+      ),
+      'evening_check_in': BrainSignal(
+        type: 'evening_check_in',
+        summary: '【手动测试】模拟傍晚 18-19 点定时主动询问信号。',
+        data: {'manual': true},
+      ),
+      'tomorrow_check_in': BrainSignal(
+        type: 'tomorrow_check_in',
+        summary: '【手动测试】模拟晚上 20-21 点询问明天计划信号。',
+        data: {'manual': true},
       ),
     };
     final signal = signals[type];

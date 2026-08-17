@@ -18,7 +18,7 @@ class ChatBubble extends StatelessWidget {
     this.tag,
     this.actions = const [],
     this.onAction,
-    this.maxWidthFactor = 0.68,
+    this.maxWidthFactor = 0.56,
   });
 
   final String content;
@@ -47,9 +47,11 @@ class ChatBubble extends StatelessWidget {
       ),
     );
 
-    // 气泡主体：贴内容收窄，靠头像侧留小尖角
+    // 气泡主体：贴内容收窄，靠头像侧留小尖角。
+    // 用 linesMargin=zero 去掉 markdown 每段的上下 8px 留白（这是气泡上下
+    // 空白的来源），文字紧贴气泡，微信式紧凑排版。
     final bubble = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: bubbleColor,
         borderRadius: BorderRadius.only(
@@ -66,6 +68,7 @@ class ChatBubble extends StatelessWidget {
           if (tag != null) _buildTagStrip(context),
           MarkdownBlock(
             data: content,
+            generator: MarkdownGenerator(linesMargin: EdgeInsets.zero),
             config: colorScheme.brightness == Brightness.dark
                 ? MarkdownConfig.darkConfig
                 : MarkdownConfig.defaultConfig,

@@ -102,6 +102,18 @@ class MainActivity : FlutterFragmentActivity() {
                         }
                     }.start()
                 }
+                "getCurrentForegroundPackage" -> {
+                    // 查询当前前台应用包名（智能体实时感知 app_switched 用）。
+                    // 放后台线程，避免 queryUsageStats 阻塞主线程。
+                    Thread {
+                        try {
+                            val pkg = getCurrentForegroundPackage()
+                            runOnUiThread { result.success(pkg) }
+                        } catch (e: Exception) {
+                            runOnUiThread { result.error("USAGE_ERROR", e.message, null) }
+                        }
+                    }.start()
+                }
                 "startMonitor" -> {
                     UsageMonitorService.start(this)
                     result.success(null)
@@ -426,6 +438,54 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
         return out
+    }
+
+    /**
+     * 查询当前前台应用包名（智能体实时感知 app_switched 用）。
+     *
+     * 主路径：queryUsageStats(INTERVAL_BEST, now-60s, now) 里 lastTimeUsed 最大、
+     * 且落在窗口内的包；过滤掉本 App。兜底：queryEvents 最近一条 ACTIVITY_RESUMED。
+     * 返回 null 表示拿不到（未授予使用权限）；返回 "" 表示用户此刻在 moodiary 本身
+     * （Dart 视为「在本 App 内」，不算切到别的 App）。
+     */
+    private fun getCurrentForegroundPackage(): String? {
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val now = System.currentTimeMillis()
+        val windowStart = now - 60_000
+        var best: String? = null
+        var bestTime = 0L
+        var selfTime = 0L
+        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_BEST, windowStart, now)
+        for (s in stats) {
+            if (s.packageName == packageName) {
+                selfTime = maxOf(selfTime, s.lastTimeUsed)
+                continue
+            }
+            if (s.lastTimeUsed in windowStart..now && s.lastTimeUsed > bestTime) {
+                bestTime = s.lastTimeUsed
+                best = s.packageName
+            }
+        }
+        if (selfTime > bestTime) return "" // 本 App 最近被使用 → 用户正在 moodiary 内
+        if (best != null) return best
+        // 兜底：事件流里最近一条 ACTIVITY_RESUMED
+        val events = usm.queryEvents(windowStart, now)
+        val e = UsageEvents.Event()
+        var lastResumed: String? = null
+        var lastResumedTime = 0L
+        var selfResumedTime = 0L
+        while (events.hasNextEvent()) {
+            events.getNextEvent(e)
+            if (e.eventType != UsageEvents.Event.ACTIVITY_RESUMED) continue
+            if (e.packageName == packageName) {
+                selfResumedTime = e.timeStamp
+            } else {
+                lastResumed = e.packageName
+                lastResumedTime = e.timeStamp
+            }
+        }
+        if (selfResumedTime >= lastResumedTime) return ""
+        return lastResumed
     }
 
     /** 解析单个应用名；解析失败兜底为包名。 */

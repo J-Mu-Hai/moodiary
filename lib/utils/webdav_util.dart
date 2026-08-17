@@ -91,6 +91,7 @@ class WebDavUtil {
     await _client!.mkdirAll(WebDavOptions.diaryPath);
     await _client!.mkdirAll(WebDavOptions.categoryPath);
     await _client!.mkdirAll(WebDavOptions.usagePath);
+    await _client!.mkdirAll(WebDavOptions.metaPath);
     await checkSyncFlag();
   }
 
@@ -398,6 +399,297 @@ class WebDavUtil {
       onComplete?.call();
     } finally {
       _syncingUsage = false;
+    }
+  }
+
+  // ========== 智能体元数据（画像 / 任务 / 聊天记录）同步 ==========
+
+  /// 参与跨端同步的 PrefUtil 元数据键。
+  /// 用户输入(assistantChat)、智能体任务(agentTasks/agentRules)、
+  /// 用户画像(userMemory)、日记已读侧表(diaryAiRead)、
+  /// 大脑输入/输出记录(brainLastDecision/brainDecisionLog)。
+  /// 这些键体量小、变化频繁、用户感知强，单独走一条快同步链路，
+  /// 不随日记的慢同步。
+  static const List<String> _metaKeys = [
+    'userMemory',
+    'agentTasks',
+    'agentRules',
+    'assistantChat',
+    'diaryAiRead',
+    'brainLastDecision',
+    'brainDecisionLog',
+    // 行为观察时序库 / 专注模式状态（智能体观察者阶段 4）
+    'behaviorObservations',
+    'focusMode',
+    // 统一作息库（daily_rhythm.dart）：起床时间/分时段计划/完成情况
+    'dailyRhythm',
+  ];
+
+  /// 本地"上次应用的服务器标记"（key → {m: 服务器 mtime, h: 内容指纹}），
+  /// 存 PrefUtil。m 用于判断"服务器是否在我上次应用之后又变了"；h 用于
+  /// 免下载判断"本地值相对上次应用时是否变了"（见 [_metaFingerprint]）。
+  static const String _metaStampKey = 'metaSyncStamp';
+
+  /// 元数据同步防重入锁
+  bool _syncingMeta = false;
+
+  /// Meta 目录是否已在本会话中创建（避免每次同步都发一次 mkdirAll）
+  bool _metaDirReady = false;
+
+  /// 内容指纹：长度 + FNV-1a（31 位），判断"本地值相对上次应用时是否变了"。
+  /// 不依赖 Dart 内置 hashCode（它可能跨 runtime 版本变化，会导致 App
+  /// 升级后误判"本地改了"而把旧值推上服务器），保证指纹跨版本稳定。
+  /// 只在同一设备上做比较（stamp 按设备本地存储）。
+  static String _metaFingerprint(String value) {
+    var h = 0x811c9dc5; // FNV offset basis
+    for (final u in value.codeUnits) {
+      h ^= u;
+      h = (h * 0x01000193) & 0x7fffffff; // FNV prime，掩到 31 位避免负号歧义
+    }
+    return '${value.length}:$h';
+  }
+
+  /// 读取本地 stamp。兼容旧格式：旧数据是 `key → mtime 字符串`，迁到
+  /// 新格式时指纹置 null，同步时会走一次内容对比后补上新指纹。
+  Map<String, Map<String, dynamic>> _getMetaStamp() {
+    final s = PrefUtil.getValue<String>(_metaStampKey);
+    if (s == null || s.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(s);
+      if (decoded is! Map) return {};
+      final result = <String, Map<String, dynamic>>{};
+      decoded.forEach((k, v) {
+        if (v is String) {
+          // 旧格式：只有 mtime，内容未知 → 下一轮做内容对比
+          result[k.toString()] = {'m': v, 'h': null};
+        } else if (v is Map) {
+          result[k.toString()] = Map<String, dynamic>.from(v);
+        }
+      });
+      return result;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _touchMetaStamp(String key, String mtime, [String? fingerprint]) async {
+    final map = _getMetaStamp();
+    map[key] = {'m': mtime, 'h': fingerprint};
+    await PrefUtil.setValue<String>(_metaStampKey, jsonEncode(map));
+  }
+
+  Future<Map<String, String>> _fetchMetaSyncData() async {
+    if (_client == null) return {};
+    try {
+      final response = await _client!
+          .read(WebDavOptions.metaSyncFlagPath)
+          .timeout(const Duration(seconds: 15));
+      if (response.isNotEmpty) {
+        return Map<String, String>.from(jsonDecode(utf8.decode(response)));
+      }
+    } catch (_) {
+      // 标记文件尚未创建，视为空
+    }
+    return {};
+  }
+
+  Future<void> _updateMetaSyncData(Map<String, String> syncData) async {
+    if (_client == null) return;
+    await _client!
+        .write(WebDavOptions.metaSyncFlagPath, utf8.encode(jsonEncode(syncData)))
+        .timeout(const Duration(seconds: 15));
+  }
+
+  Future<void> _writeMetaKey(String key, String value) async {
+    _client!.setHeaders({
+      'accept-charset': 'utf-8',
+      'Content-Type': 'application/json',
+    });
+    await _client!
+        .write('${WebDavOptions.metaPath}/$key.json', utf8.encode(value))
+        .timeout(const Duration(seconds: 15));
+  }
+
+  /// 智能体元数据的双向增量同步（手机 ↔ 电脑）。
+  ///
+  /// 与 [syncDiary]/[syncUsageRecords] 同一套"同步标记 + 逐条 JSON"范式，
+  /// 独立目录 `/Moodiary/Meta/`：`sync.json` 记录每个键最后写入时刻，
+  /// `<key>.json` 存对应 PrefUtil 键的 JSON 值。画像 / 任务 / 聊天记录
+  /// 体量小，同步快，随"发消息即时推送 + 聊天页 10 秒轮询 + 应用启动 +
+  /// 5 分钟采集"等节奏同步，秒级到达另一端。
+  ///
+  /// [pullOnly] 为轻量轮询模式（聊天页定时器用）：只拉取"服务器在我上次
+  /// 应用之后又变了"的键，不推、不改服务器标记，每次只 1~2 个小请求，
+  /// 适合高频轮询。推送由发消息/离开页面等完整同步负责。
+  ///
+  /// 完整同步对每个键：本地/服务器都有且内容未变时，凭「上次内容指纹」
+  /// （见 [_metaFingerprint]，存于本地 stamp）免下载直接跳过——即使
+  /// 元数据键变大了（如完整的大脑输入/输出日志）也不会拖慢每次同步。
+  ///
+  /// 冲突策略（v1）：按键 last-write-wins。
+  /// - 本地无值且服务器有 → 拉取；
+  /// - 本地有且服务器无 → 推送；
+  /// - 两边都有：服务器自上次应用后没变 → 本地改了推、没改跳过；
+  ///   服务器在我之后变了 → 拉取服务器。
+  /// 单一用户交替使用手机/电脑的场景足够，不做字段级合并。
+  Future<void> syncMetadata({
+    bool pullOnly = false,
+    flutter.VoidCallback? onUpload,
+    flutter.VoidCallback? onDownload,
+    flutter.VoidCallback? onComplete,
+  }) async {
+    if (_client == null || _syncingMeta) return;
+    _syncingMeta = true;
+    try {
+      if (!_metaDirReady) {
+        await _client!.mkdirAll(WebDavOptions.metaPath);
+        _metaDirReady = true;
+      }
+      final serverFlag = await _fetchMetaSyncData();
+      final stamp = _getMetaStamp();
+      final updatedFlag = {...serverFlag};
+
+      for (final key in _metaKeys) {
+        final local = PrefUtil.getValue<String>(key);
+        final serverMtime = serverFlag[key];
+        final stampEntry = stamp[key];
+        final lastMtime = stampEntry?['m'] as String?;
+        final lastFp = stampEntry?['h'] as String?;
+
+        // 轮询模式：只拉取"服务器在我上次应用后变了"的键（含本地还没有、
+        // 服务器却有的情况），不推、不改服务器标记。
+        if (pullOnly) {
+          final remoteChanged = serverMtime != null && lastMtime != serverMtime;
+          if (!remoteChanged) continue;
+          try {
+            final data = await _client!
+                .read('${WebDavOptions.metaPath}/$key.json')
+                .timeout(const Duration(seconds: 15));
+            if (data.isNotEmpty) {
+              final pulled = utf8.decode(data);
+              await PrefUtil.setValue<String>(key, pulled);
+              onDownload?.call();
+              await _touchMetaStamp(key, serverMtime, _metaFingerprint(pulled));
+            } else {
+              await _touchMetaStamp(key, serverMtime, lastFp);
+            }
+          } catch (_) {
+            // 单次拉取失败不处理，下一轮再试
+          }
+          continue;
+        }
+
+        // 本地没有值：服务器有就拉一份，两边都没有就跳过。
+        if (local == null || local.isEmpty) {
+          if (serverMtime == null) continue;
+          try {
+            final data = await _client!
+                .read('${WebDavOptions.metaPath}/$key.json')
+                .timeout(const Duration(seconds: 15));
+            if (data.isNotEmpty) {
+              final pulled = utf8.decode(data);
+              await PrefUtil.setValue<String>(key, pulled);
+              onDownload?.call();
+              await _touchMetaStamp(key, serverMtime, _metaFingerprint(pulled));
+            }
+          } catch (e) {
+            // 下载失败，移除标记避免反复尝试
+            updatedFlag.remove(key);
+          }
+          continue;
+        }
+
+        // 本地有、服务器没有 → 推送本地。
+        if (serverMtime == null) {
+          await _writeMetaKey(key, local);
+          final pushed = DateTime.now().toIso8601String();
+          updatedFlag[key] = pushed;
+          await _touchMetaStamp(key, pushed, _metaFingerprint(local));
+          onUpload?.call();
+          continue;
+        }
+
+        // 两边都有。优先用「上次内容指纹 + 服务器 mtime」判断，避免每次
+        // 全量同步都把（可能较大的）元数据从服务器下载下来做内容对比。
+        // 旧格式 stamp（指纹为 null）时退回老的内容对比逻辑做一次迁移。
+        if (lastFp != null) {
+          if (lastMtime == serverMtime) {
+            // 服务器自上次应用后没变：本地还是上次那份就无变化；本地改了
+            // 则直接推送（无需下载，本地值就是最新）。
+            if (_metaFingerprint(local) == lastFp) {
+              await _touchMetaStamp(key, serverMtime, lastFp);
+              continue;
+            }
+            await _writeMetaKey(key, local);
+            final pushed = DateTime.now().toIso8601String();
+            updatedFlag[key] = pushed;
+            await _touchMetaStamp(key, pushed, _metaFingerprint(local));
+            onUpload?.call();
+            continue;
+          }
+          // 服务器在我之后变了 → 拉取服务器版本（last-write-wins）。
+          String? pulled;
+          try {
+            final data = await _client!
+                .read('${WebDavOptions.metaPath}/$key.json')
+                .timeout(const Duration(seconds: 15));
+            if (data.isNotEmpty) {
+              pulled = utf8.decode(data);
+              await PrefUtil.setValue<String>(key, pulled);
+              onDownload?.call();
+            }
+          } catch (_) {
+            // 拉取失败保留本地值，下一轮再试
+          }
+          await _touchMetaStamp(
+              key, serverMtime, _metaFingerprint(pulled ?? local));
+          continue;
+        }
+
+        // 迁移路径（旧 stamp 无指纹）：读服务器内容对比，决定推/拉，落新指纹。
+        String? serverData;
+        try {
+          final data = await _client!
+              .read('${WebDavOptions.metaPath}/$key.json')
+              .timeout(const Duration(seconds: 15));
+          serverData = data.isNotEmpty ? utf8.decode(data) : null;
+        } catch (_) {
+          serverData = null;
+        }
+
+        if (serverData == local) {
+          // 内容一致：采纳当前标记即可，不重复上传。
+          await _touchMetaStamp(key, serverMtime, _metaFingerprint(local));
+          continue;
+        }
+
+        if (lastMtime == serverMtime) {
+          // 服务器在我上次应用后没变，本地改了 → 推送本地。
+          await _writeMetaKey(key, local);
+          final pushed = DateTime.now().toIso8601String();
+          updatedFlag[key] = pushed;
+          await _touchMetaStamp(key, pushed, _metaFingerprint(local));
+          onUpload?.call();
+        } else {
+          // 服务器在我之后变了 → 拉取服务器版本（last-write-wins）。
+          if (serverData != null) {
+            await PrefUtil.setValue<String>(key, serverData);
+            onDownload?.call();
+          }
+          await _touchMetaStamp(
+              key, serverMtime, _metaFingerprint(serverData ?? local));
+        }
+      }
+
+      // 轮询模式不改服务器标记（只读）；完整同步才写回。
+      if (!pullOnly) {
+        await _updateMetaSyncData(updatedFlag);
+      }
+      onComplete?.call();
+    } catch (e) {
+      print('[SYNC] metadata sync error: $e');
+    } finally {
+      _syncingMeta = false;
     }
   }
 

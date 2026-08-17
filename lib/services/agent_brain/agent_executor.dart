@@ -18,6 +18,8 @@ import 'package:moodiary/utils/tts_speaker.dart';
 import 'package:refreshed/refreshed.dart';
 
 import 'agent_task.dart';
+import 'behavior_observations.dart';
+import 'daily_rhythm.dart';
 import 'diary_ai_read.dart';
 
 /// 智能体执行器 — 把任务按 action 分发到具体能力上。
@@ -62,6 +64,17 @@ class AgentExecutor {
       final last =
           after != null && after.feedback.isNotEmpty ? after.feedback.last : '';
       print('[Executor] 任务「${task.title}」终态=${after?.status} 反馈=$last');
+      // 行为观察：任务闭环 → 记录「完成任务」（waitingUser 类任务等用户
+      // 回复后由 processFeedback 收尾，这里只记一次到位为 done 的）。
+      if (after != null && after.status == 'done') {
+        unawaited(BehaviorObservationStore.record(
+          event: '完成任务',
+          activity: after.title,
+          taskId: after.id,
+          taskTitle: after.title,
+          confidence: 0.6,
+        ));
+      }
     } catch (e) {
       print('[Executor] 任务「${task.title}」执行异常: $e');
       rethrow;
@@ -384,17 +397,17 @@ $buf''';
     }
   }
 
-  /// 0 点归位：梳理刚结束的这一天。
+  /// 晚间复盘：梳理今天。
   ///
-  /// 确定性每日例行（不经大脑规划），由 BrainService 每天 0 点后创建：
-  /// 读当天未读日记 + 使用时间线 + 用户任务板块 → AI 产出画像增量 + 温柔复盘 →
+  /// 确定性每日例行（不经大脑规划），由 BrainService 每天 23:00 后创建：
+  /// 读当天未读日记 + 使用时间线 + 今日作息与计划 + 用户任务板块 →
+  /// AI 产出画像增量 + 温柔复盘；没收集到的计划空缺并入复盘内容。
   /// 沉淀画像、标记日记已读、把复盘存为「待读」，用户下次打开助手页时看到。
-  /// 不跳页不语音：0 点归位是安静动作，复盘在用户主动打开对话时才呈现。
+  /// 不跳页不语音：复盘是安静动作，复盘内容在用户主动打开对话时才呈现。
   static Future<void> _execNightlyReview(AgentTask task) async {
     final provider = AiProviderManager().currentProvider;
     final now = DateTime.now();
-    final day = DateTime(now.year, now.month, now.day)
-        .subtract(const Duration(days: 1));
+    final day = DateTime(now.year, now.month, now.day);
     final dateLabel = '${day.month}月${day.day}日';
 
     if (provider == null || !provider.isConfigured) {
@@ -437,9 +450,16 @@ $buf''';
         material.writeln();
       }
     }
+    // 统一作息：读今日作息库（起床/分时段计划/完成情况），空缺并入复盘
+    await DailyRhythmStore.refreshBoard();
+    final rhythm = await DailyRhythmStore.summaryText();
+
     material
       ..writeln('\n【当天的使用时间线】（手机使用记录，用于推断作息与行为逻辑）')
       ..writeln(timeline.isEmpty ? '（无使用记录）' : timeline)
+      ..writeln('\n【今日作息与计划】（起床时间/各时段计划与完成/每日计划栏目；'
+          '未收集的时段会标"（未收集）"，复盘时自然带出空缺）')
+      ..writeln(rhythm.isEmpty ? '（暂无数据）' : rhythm)
       ..writeln('\n【用户任务板块（未完成）】')
       ..writeln(pendingTasks.isEmpty ? '（无未完成任务）' : pendingTasks)
       ..writeln('\n【当前画像】（已有认知，新的不要重复）')

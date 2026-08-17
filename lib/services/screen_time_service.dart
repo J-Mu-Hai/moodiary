@@ -249,13 +249,17 @@ class ScreenTimeService {
     }
   }
 
-  /// 有 WebDAV 配置时同步使用时间记录。
+  /// 有 WebDAV 配置时同步使用时间记录 + 智能体元数据。
   /// 带整体超时，防止服务器慢时把 `_syncingUsage` 锁死导致后续同步全部跳过。
   Future<void> _sync() async {
     try {
       if (WebDavUtil().hasOption) {
         await WebDavUtil()
             .syncUsageRecords()
+            .timeout(const Duration(seconds: 20), onTimeout: () {});
+        // 画像 / 任务 / 聊天记录随 5 分钟采集节奏同步，分钟级到达另一端。
+        await WebDavUtil()
+            .syncMetadata()
             .timeout(const Duration(seconds: 20), onTimeout: () {});
       }
     } catch (_) {}

@@ -12,11 +12,18 @@ class WebDavOptions {
   //屏幕使用时间记录目录（v1 明文 JSON，独立于日记增量同步）
   static const String usagePath = '/Moodiary/Usage';
 
+  //智能体元数据目录（用户画像 / 智能体任务 / 聊天记录等 PrefUtil 键，
+  //体量小、要快同步，独立于日记增量同步）
+  static const String metaPath = '/Moodiary/Meta';
+
   //增量同步标记文件路径
   static const String syncFlagPath = '/Moodiary/sync.json';
 
   //使用时间记录的增量同步标记文件路径
   static const String usageSyncFlagPath = '/Moodiary/Usage/sync.json';
+
+  //智能体元数据的增量同步标记文件路径
+  static const String metaSyncFlagPath = '/Moodiary/Meta/sync.json';
 
   // 连通性颜色标记
   static const Color connectivityColor = Color(0xFF4CAF50);

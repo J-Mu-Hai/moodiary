@@ -68,6 +68,9 @@ class DiaryLogic extends GetxController with GetTickerProviderStateMixin {
       await WebDavUtil().syncDiary(diary, onDownload: () async {
         await refreshAll();
       });
+      // 画像 / 智能体任务 / 聊天记录等关键元数据体量小，随启动同步一次，
+      // 让两端尽快对齐（比日记快得多）。
+      await WebDavUtil().syncMetadata();
     }
   }
 

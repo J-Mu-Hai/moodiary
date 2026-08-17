@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/utils/notice_util.dart';
 
+import 'agent_brain.dart';
 import 'agent_executor.dart';
 import 'agent_monitor.dart';
 import 'agent_task.dart';
@@ -33,9 +34,24 @@ class BrainService {
   }
 
   /// 用户写完日记时调用（编辑页保存成功处接线）。
-  Future<void> notifyDiaryWritten() async {
+  ///
+  /// 事件驱动：日记刚写完立即送入大脑（diary_written 信号），不等 30 分钟
+  /// 的 diary_stable 稳定信号，让「日记变动」真正成为大脑的实时输入。
+  /// [title]/[snippet] 用于把日记信息带进决策上下文。
+  Future<void> notifyDiaryWritten({String? title, String? snippet}) async {
     await BrainMonitor.recordDiaryWritten();
-    print('[BrainService] 日记写入已记录');
+    final t = title?.trim();
+    final snip = snippet?.trim();
+    final summary = snip == null || snip.isEmpty
+        ? '用户刚写完一篇日记${t != null && t.isNotEmpty ? '《$t》' : ''}。'
+            '请看一眼今天的记录，判断是否需要关怀，或为今天做点安排。'
+        : '用户刚写完一篇日记${t != null && t.isNotEmpty ? '《$t》' : ''}，内容开头：$snip';
+    await AgentBrain.handleSignal(BrainSignal(
+      type: 'diary_written',
+      summary: summary,
+      data: {'title': t, 'snippet': snip},
+    ));
+    print('[BrainService] 日记写入已记录并触发 diary_written 信号');
   }
 
   /// 立即执行一次到点任务分发（实验室手动触发用）。
@@ -69,15 +85,17 @@ class BrainService {
     }
   }
 
-  /// 每日例行「0 点归位」的确定性调度（不进大脑决策，可靠不靠 AI 自觉）。
+  /// 每日例行「晚间复盘」的确定性调度（不进大脑决策，可靠不靠 AI 自觉）。
   ///
-  /// 每天 00:00 之后第一次 tick（App 存活时）创建一次 nightly_review 任务，
-  /// scheduledAt=now 到点立即派发，梳理「刚结束的那一天」。用 PrefUtil 记录
-  /// 跨天防重复；当天已存在 pending/running 的归位任务（如派发失败待重试）
-  /// 也视为已调度，避免每 tick 重复创建。
+  /// 每天 23:00 之后第一次 tick（App 存活时）创建一次 nightly_review 任务，
+  /// scheduledAt=now 到点立即派发，梳理「今天」并留下复盘；当天没收集到的
+  /// 计划空缺也并入复盘（统一作息管理的兜底）。用 PrefUtil 记录跨天防重复；
+  /// 当天已存在 pending/running 的复盘任务（如派发失败待重试）也视为已调度。
   Future<void> _checkNightlyReview() async {
     try {
       final now = DateTime.now();
+      // 23:00 后进入晚间复盘窗口
+      if (now.hour < 23) return;
       final today = '${now.year}-${now.month}-${now.day}';
       final last = PrefUtil.getValue<String>('nightlyReviewLastAt') ?? '';
       if (last == today) return;
@@ -94,16 +112,17 @@ class BrainService {
       }
 
       await AgentTaskStore.add(AgentTask(
-        title: '夜间归位：梳理今天',
+        title: '晚间复盘：梳理今天',
         kind: 'scheduled',
         action: 'nightly_review',
+        params: {'basicTask': true}, // 统一作息的基础任务之一（实验室按此分组）
         scheduledAt: now,
         priority: 2,
       ));
       await PrefUtil.setValue<String>('nightlyReviewLastAt', today);
-      print('[BrainService] 已创建夜间归位任务（$today）');
+      print('[BrainService] 已创建晚间复盘任务（$today）');
     } catch (e) {
-      print('[BrainService] 夜间归位调度失败: $e');
+      print('[BrainService] 晚间复盘调度失败: $e');
     }
   }
 

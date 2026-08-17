@@ -1015,8 +1015,14 @@ class EditLogic extends GetxController {
       oldDiary: state.originalDiary,
       newDiary: state.currentDiary,
     );
-    // 通知智能体：日记已写入（触发「信息稳定」信号的地基）
-    unawaited(BrainService().notifyDiaryWritten());
+    // 通知智能体：日记刚写完立即入脑（diary_written 信号，带标题+内容片段）
+    final _plainText = state.currentDiary.contentText.trim();
+    unawaited(BrainService().notifyDiaryWritten(
+      title: state.currentDiary.title,
+      snippet: _plainText.length > 80
+          ? _plainText.substring(0, 80)
+          : _plainText,
+    ));
     state.isNew
         ? Get.back(result: state.currentDiary.categoryId ?? '')
         : Get.back(result: 'changed');
