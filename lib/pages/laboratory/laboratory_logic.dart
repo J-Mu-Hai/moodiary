@@ -8,7 +8,6 @@ import 'package:moodiary/services/agent_brain/agent_brain.dart';
 import 'package:moodiary/services/agent_brain/agent_executor.dart';
 import 'package:moodiary/services/agent_brain/agent_rule.dart';
 import 'package:moodiary/services/agent_brain/agent_task.dart';
-import 'package:moodiary/services/agent_brain/behavior_observations.dart';
 import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/utils/aes_util.dart';
 import 'package:moodiary/utils/environment_sensor.dart';
@@ -186,14 +185,6 @@ class LaboratoryLogic extends GetxController {
     }).toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
-
-  /// 观察者积累的行为观察（时间段→在做什么→效果），新→旧。
-  Future<List<BehaviorObservation>> loadBehaviorObservations() =>
-      BehaviorObservationStore.recent(limit: 40);
-
-  /// 常做行为模板文本（时间段→App→次数），供评估观察者效果。
-  Future<String> behaviorTemplateText() =>
-      BehaviorObservationStore.topBehaviorsText(DateTime.now(), top: 4);
 
   /// 手动触发一类信号（force 跳过冷却），返回大脑决策结果。
   Future<String> triggerBrainSignal(String type) async {

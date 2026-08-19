@@ -12,6 +12,7 @@ import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/ai_functions.dart';
 import 'package:moodiary/services/ai_prompt_manager.dart';
 import 'package:moodiary/services/agent_brain/agent_brain.dart';
+import 'package:moodiary/services/agent_brain/daily_routine.dart';
 import 'package:moodiary/services/agent_brain/focus_mode.dart';
 import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/services/reply_chunker.dart';
@@ -677,6 +678,30 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
         }
       } catch (e) {
         print('[Memory Profile Error] $e');
+      }
+
+      // 注入行为作息与监督（用户自定义的每日时段 + 手机观察对照）——
+      // 让温晚照知道用户此刻应处于什么身份/做什么、实际观察到了什么。
+      try {
+        final routine = await DailyRoutineStore.load();
+        if (routine.slots.isNotEmpty) {
+          final now = DateTime.now();
+          final slot = DailyRoutineStore.slotAt(routine, now);
+          final slotText = slot == null
+              ? '（无匹配时段）'
+              : '${slot.identity.trim().isNotEmpty ? slot.identity.trim() : (routine.defaultIdentity.trim().isNotEmpty ? routine.defaultIdentity.trim() : '我')}'
+                  '${slot.activity.trim().isEmpty ? '（未填）' : '·${slot.activity.trim()}'}';
+          chatMessages.insert(0, AIMessage(
+            role: 'system',
+            content: '【行为作息与监督】\n'
+                '用户作息表：\n${DailyRoutineStore.summaryText(routine)}'
+                '\n当前 ${DailyRoutineStore.fmtMm(now.hour * 60 + now.minute)}'
+                ' → 应处于：$slotText'
+                '\n手机监督：\n${await DailyRoutineStore.supervisionText(routine)}',
+          ));
+        }
+      } catch (e) {
+        print('[Routine Context Error] $e');
       }
 
       // 注入 AI 性格系统提示词（每个对话只注入一次）

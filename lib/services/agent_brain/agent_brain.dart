@@ -16,6 +16,7 @@ import 'behavior_observations.dart';
 import 'brain_reflect.dart';
 import 'brain_service.dart';
 import 'daily_rhythm.dart';
+import 'daily_routine.dart';
 import 'focus_mode.dart';
 
 /// 大脑信号 — 代码机械监督 / 用户规则 / 任务变化 送入大脑的输入。
@@ -464,14 +465,24 @@ ${task.feedback.join('\n')}
     }
     buf.writeln();
 
-    // 行为观察：当前时段的常做行为模板 + 最近观察，让大脑决策有
-    // 「用户此刻行为模式 + 历史契合度」依据（行为习惯模板的地基）。
+    // 行为作息与监督：用户自定义的每日时段（身份×做什么）是计划线，
+    // 智能体手机观察是实际线，对照拼出「真实行为」，是分析用户行为的重要依据。
+    // 同时保留原「常做行为模板/最近观察」两行作为监督的补充。
     try {
-      final obsText = await BehaviorObservationStore.recentText(limit: 3);
-      final tmpl = await BehaviorObservationStore.topBehaviorsText(now);
-      buf.writeln('【行为观察】');
-      buf.writeln('常做行为模板：$tmpl');
-      buf.writeln('最近观察：$obsText');
+      final routine = await DailyRoutineStore.load();
+      final slot = DailyRoutineStore.slotAt(routine, now);
+      buf.writeln('【行为作息与监督】');
+      buf.writeln('用户作息表（用户定义）：');
+      buf.writeln(DailyRoutineStore.summaryText(routine));
+      final slotText = slot == null
+          ? '（无匹配时段）'
+          : '${slot.identity.trim().isNotEmpty ? slot.identity.trim() : (routine.defaultIdentity.trim().isNotEmpty ? routine.defaultIdentity.trim() : '我')}'
+              '${slot.activity.trim().isEmpty ? '（未填）' : '·${slot.activity.trim()}'}';
+      buf.writeln('当前 ${_hm(now)} → 应处于：$slotText');
+      buf.writeln('手机监督（计划 vs 近3天实际观察）：');
+      buf.writeln(await DailyRoutineStore.supervisionText(routine));
+      buf.writeln('常做行为模板：${await BehaviorObservationStore.topBehaviorsText(now)}');
+      buf.writeln('最近观察：${await BehaviorObservationStore.recentText(limit: 3)}');
       buf.writeln();
     } catch (_) {
       buf.writeln();

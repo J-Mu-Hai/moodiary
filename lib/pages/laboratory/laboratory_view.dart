@@ -8,7 +8,6 @@ import 'package:moodiary/common/models/ai_provider.dart';
 import 'package:moodiary/main.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/agent_brain/agent_task.dart';
-import 'package:moodiary/services/agent_brain/behavior_observations.dart';
 import 'package:moodiary/services/agent_brain/daily_rhythm.dart';
 import 'package:moodiary/utils/notice_util.dart';
 import 'package:moodiary/utils/webdav_util.dart';
@@ -249,8 +248,6 @@ class _BrainSectionState extends State<_BrainSection> {
   final logic = Bind.find<LaboratoryLogic>();
   List<AgentTask> _tasks = [];
   List<AgentTask> _basicTasks = [];
-  List<BehaviorObservation> _observations = [];
-  String _behaviorTemplate = '';
   List<String> _rules = [];
   Map<String, dynamic>? _decision;
   List<Map<String, dynamic>> _decisionLog = [];
@@ -278,8 +275,6 @@ class _BrainSectionState extends State<_BrainSection> {
   Future<void> _loadFromLocal() async {
     final tasks = await logic.loadActiveTasks();
     final basicTasks = await logic.loadBasicTasksToday();
-    final observations = await logic.loadBehaviorObservations();
-    final behaviorTemplate = await logic.behaviorTemplateText();
     final rules = await logic.loadRules();
     final decision = await logic.getLastBrainDecision();
     final decisionLog = await logic.getBrainDecisionLog();
@@ -287,8 +282,6 @@ class _BrainSectionState extends State<_BrainSection> {
     setState(() {
       _tasks = tasks;
       _basicTasks = basicTasks;
-      _observations = observations;
-      _behaviorTemplate = behaviorTemplate;
       _rules = rules;
       _decision = decision;
       _decisionLog = decisionLog;
@@ -355,13 +348,6 @@ class _BrainSectionState extends State<_BrainSection> {
 
   String _fmtHm(DateTime t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-
-  /// 行为观察时长的紧凑格式。
-  String _obsDur(int ms) {
-    final m = (ms / 60000).round();
-    if (m < 1) return '<1分钟';
-    return m < 60 ? '$m分钟' : '${m ~/ 60}小时${m % 60}分钟';
-  }
 
   /// 任务类型的中文标签（immediate=即时 / scheduled=定时 / longterm=长期）。
   String _kindLabel(String kind) => switch (kind) {
@@ -895,54 +881,6 @@ class _BrainSectionState extends State<_BrainSection> {
               ),
             );
           }),
-        // 行为观察（观察者积累）：时间段→在做什么→次数模板 + 最近观察明细，
-        // 让用户能评估观察者是否真实捕捉到自己的行为习惯。
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text('行为观察（观察者积累的习惯）', style: textStyle.titleSmall),
-        ),
-        if (_behaviorTemplate.isNotEmpty &&
-            _behaviorTemplate != '（暂无模板）')
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: Text('常做行为模板：$_behaviorTemplate',
-                style: textStyle.bodySmall
-                    ?.copyWith(color: colorScheme.onSurfaceVariant)),
-          ),
-        if (_observations.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text('暂无观察：切换 App、完成专注/任务后，观察者会在这里积累',
-                style: TextStyle(fontSize: 12)),
-          )
-        else
-          ..._observations.take(15).map((o) => ListTile(
-                dense: true,
-                leading: Icon(
-                  o.event == '完成任务'
-                      ? Icons.task_alt
-                      : o.event == '专注结束'
-                          ? Icons.timer_off_outlined
-                          : o.event == '自我报告'
-                              ? Icons.record_voice_over_outlined
-                              : Icons.switch_account_outlined,
-                  size: 18,
-                  color: o.effect != null && o.effect! < 0.5
-                      ? colorScheme.error
-                      : colorScheme.primary,
-                ),
-                title: Text('${o.timeRange} · ${o.activity}',
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                subtitle: Text(
-                  '${_fmtHm(o.time)} · ${o.event}'
-                  '${o.category.isNotEmpty ? ' · $o.category' : ''}'
-                  '${o.durationMs != null ? ' · ${_obsDur(o.durationMs!)}' : ''}'
-                  '${o.effect != null ? ' · 效果${(o.effect! * 10).round()}/10' : ''}'
-                  ' · 置信度${(o.confidence * 10).round()}/10',
-                  style: textStyle.bodySmall
-                      ?.copyWith(color: colorScheme.onSurfaceVariant),
-                ),
-              )),
         // 任务执行记录已按用户要求移除：执行细节可随时在任务详情里看，
         // 实验室面板聚焦「大脑输入/输出」的复盘，不再展示已完成任务列表。
         Padding(

@@ -38,6 +38,8 @@ import 'package:moodiary/pages/privacy/privacy_logic.dart';
 import 'package:moodiary/pages/privacy/privacy_view.dart';
 import 'package:moodiary/pages/recycle/recycle_logic.dart';
 import 'package:moodiary/pages/recycle/recycle_view.dart';
+import 'package:moodiary/pages/routine/routine_logic.dart';
+import 'package:moodiary/pages/routine/routine_view.dart';
 import 'package:moodiary/pages/screen_time/screen_time_logic.dart';
 import 'package:moodiary/pages/screen_time/screen_time_view.dart';
 import 'package:moodiary/pages/share/share_logic.dart';
@@ -112,6 +114,12 @@ class AppPages {
       name: AppRoutes.laboratoryPage,
       page: () => const LaboratoryPage(),
       binds: [Bind.lazyPut(fenix: true, () => LaboratoryLogic())],
+    ),
+    //行为作息路由
+    MoodiaryGetPage(
+      name: AppRoutes.routinePage,
+      page: () => const RoutinePage(),
+      binds: [Bind.lazyPut(fenix: true, () => RoutineLogic())],
     ),
     //画画路由
     MoodiaryGetPage(
