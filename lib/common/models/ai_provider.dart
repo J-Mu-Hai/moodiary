@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
+import 'package:moodiary/utils/log_util.dart';
 import 'package:moodiary/utils/signature_util.dart';
 
 /// 一次对话中的单条消息
@@ -148,14 +149,20 @@ class TencentProvider extends AIProvider {
     };
 
     final dio = Dio();
-    final response = await dio.post<ResponseBody>(
-      config.baseUrl,
-      data: body,
-      options: Options(
-        headers: headers,
-        responseType: ResponseType.stream,
-      ),
-    );
+    final Response<ResponseBody> response;
+    try {
+      response = await dio.post<ResponseBody>(
+        config.baseUrl,
+        data: body,
+        options: Options(
+          headers: headers,
+          responseType: ResponseType.stream,
+        ),
+      );
+    } catch (e) {
+      _logAIFailure('Tencent', config.baseUrl, model, e);
+      rethrow;
+    }
 
     return response.data!.stream
         .cast<List<int>>()
@@ -212,16 +219,22 @@ class OpenAICompatibleProvider extends AIProvider {
       url = url.replaceAll(RegExp(r'/?$'), '/chat/completions');
     }
     final dio = Dio();
-    final response = await dio.post<ResponseBody>(
-      url,
-      data: body,
-      options: Options(
-        headers: headers,
-        responseType: ResponseType.stream,
-        receiveTimeout: const Duration(seconds: 120),
-        validateStatus: (status) => status == 200,
-      ),
-    );
+    final Response<ResponseBody> response;
+    try {
+      response = await dio.post<ResponseBody>(
+        url,
+        data: body,
+        options: Options(
+          headers: headers,
+          responseType: ResponseType.stream,
+          receiveTimeout: const Duration(seconds: 120),
+          validateStatus: (status) => status == 200,
+        ),
+      );
+    } catch (e) {
+      _logAIFailure('OpenAICompatible', url, model, e);
+      rethrow;
+    }
 
     return response.data!.stream
         .cast<List<int>>()
@@ -290,4 +303,15 @@ class AIProviderFactory {
           apiKey: '',
         ),
       ];
+}
+
+/// AI 请求失败诊断：把「最终请求的完整地址 + 状态码」写进日志（debug→控制台，
+/// release→error.log，不弹 bug 窗）。DioException 的 toString 不带 URL，
+/// 之前 404 只能猜是哪个服务商；加这一行后下次失败能精确定位到具体地址。
+void _logAIFailure(String kind, String url, String model, Object e) {
+  final status = e is DioException ? e.response?.statusCode : null;
+  final msg = status != null
+      ? '[AI $kind] 请求失败 $url model=$model → HTTP $status: $e'
+      : '[AI $kind] 请求失败 $url model=$model: $e';
+  LogUtil.logToFile(msg);
 }

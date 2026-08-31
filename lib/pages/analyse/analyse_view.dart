@@ -6,9 +6,9 @@ import 'package:moodiary/common/values/icons.dart';
 import 'package:moodiary/components/base/button.dart';
 import 'package:moodiary/components/mood_icon/mood_icon_view.dart';
 import 'package:moodiary/main.dart';
-import 'package:moodiary/router/app_routes.dart';
-import 'package:moodiary/services/agent_brain/daily_routine.dart';
+import 'package:moodiary/services/agent_brain/behavior_model.dart';
 import 'package:moodiary/utils/array_util.dart';
+import 'package:moodiary/utils/notice_util.dart';
 import 'package:moodiary/utils/webdav_util.dart';
 import 'package:refreshed/refreshed.dart';
 
@@ -200,8 +200,8 @@ class AnalysePage extends StatelessWidget {
                 ),
               ),
             ),
-            // 行为作息入口卡：用户自定义作息表 + 手机监督（进入独立页面编辑）
-            const _RoutineEntryCard(),
+            // 智能体行为认知只读卡：智能体自主归纳的 24h 行为作息 + 重新建模
+            const _BehaviorModelCard(),
             GridView.count(
               crossAxisCount: size.width > 600 ? 2 : 1,
               shrinkWrap: true,
@@ -220,20 +220,24 @@ class AnalysePage extends StatelessWidget {
   }
 }
 
-/// 行为作息入口卡 — 用户自定义的 24h 作息表 + 手机监督，点按钮进入独立页面编辑。
+/// 智能体行为认知只读卡 — 展示智能体自动归纳的 24h 行为作息 + 重新建模按钮。
 ///
-/// 自包含加载：先展示本地作息表，再后台拉一次跨端元数据（dailyRoutine 在
-/// 快同步清单里），保持手机/电脑两边一致。
-class _RoutineEntryCard extends StatefulWidget {
-  const _RoutineEntryCard();
+/// 自包含加载：先展示本地模型与聚合，再后台拉一次跨端元数据
+/// （behaviorObservations 在快同步清单里，拉到远端新观察后重算聚合），
+/// 保持手机/电脑两边一致。按钮直接调 BehaviorModelStore.build()（AI 归纳落库）。
+class _BehaviorModelCard extends StatefulWidget {
+  const _BehaviorModelCard();
 
   @override
-  State<_RoutineEntryCard> createState() => _RoutineEntryCardState();
+  State<_BehaviorModelCard> createState() => _BehaviorModelCardState();
 }
 
-class _RoutineEntryCardState extends State<_RoutineEntryCard> {
-  RoutineSchedule? _schedule;
-  DateTime _now = DateTime.now();
+class _BehaviorModelCardState extends State<_BehaviorModelCard> {
+  BehaviorModel? _model;
+  String _aggregation = '';
+  String _currentWindow = '';
+  bool _building = false; // 「重新建模」转圈
+  bool _loading = true;
 
   @override
   void initState() {
@@ -242,37 +246,48 @@ class _RoutineEntryCardState extends State<_RoutineEntryCard> {
   }
 
   Future<void> _refresh() async {
-    final s = await DailyRoutineStore.load();
-    // 作息表在跨端快同步清单里：后台拉一次远端变化，有更新再刷新本地展示。
-    // WebDAV 未配置时 syncMetadata 内部 _client == null 直接返回，安全 no-op。
+    // 先展示本地，再后台拉远端观察（WebDAV 未配置时 syncMetadata 内部
+    // _client == null 直接返回，安全 no-op）。
     unawaited(WebDavUtil()
         .syncMetadata(pullOnly: true)
         .timeout(const Duration(seconds: 20), onTimeout: () {})
         .then((_) {
       if (mounted) _reload();
     }));
-    if (mounted) {
-      setState(() {
-        _schedule = s;
-        _now = DateTime.now();
-      });
-    }
+    if (mounted) _reload();
   }
 
   Future<void> _reload() async {
-    final s = await DailyRoutineStore.load();
+    final m = await BehaviorModelStore.load();
+    final agg = await BehaviorModelStore.aggregationText();
+    final cur = await BehaviorModelStore.currentWindowText(DateTime.now());
     if (!mounted) return;
     setState(() {
-      _schedule = s;
-      _now = DateTime.now();
+      _model = m;
+      _aggregation = agg;
+      _currentWindow = cur;
+      _loading = false;
     });
+  }
+
+  /// 重新建模：AI 归纳 + 落库，转圈提示，完成后刷新。
+  Future<void> _rebuild() async {
+    if (_building) return;
+    setState(() => _building = true);
+    final msg = await BehaviorModelStore.build();
+    if (!mounted) return;
+    setState(() => _building = false);
+    NoticeUtil.showToast(msg);
+    await _reload();
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textStyle = Theme.of(context).textTheme;
-    final s = _schedule;
+    final narrative = _model == null || (_model!.narrative.isEmpty)
+        ? '（尚未建模，将自动归纳）'
+        : _model!.narrative;
     return Card.filled(
       color: colorScheme.surfaceContainer,
       child: Padding(
@@ -282,9 +297,10 @@ class _RoutineEntryCardState extends State<_RoutineEntryCard> {
           children: [
             Row(
               children: [
-                Icon(Icons.schedule, size: 18, color: colorScheme.primary),
+                Icon(Icons.psychology_outlined,
+                    size: 18, color: colorScheme.primary),
                 const SizedBox(width: 8),
-                Text('行为作息（你的每日时段 · 身份 × 做什么）',
+                Text('智能体行为认知（自主归纳你的 24h 作息）',
                     style: textStyle.titleSmall),
                 const Spacer(),
                 IconButton(
@@ -295,33 +311,40 @@ class _RoutineEntryCardState extends State<_RoutineEntryCard> {
               ],
             ),
             const SizedBox(height: 4),
-            if (s == null)
+            if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Text('加载中…', style: TextStyle(fontSize: 12)),
               )
-            else if (s.slots.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text(
-                  '还没有作息表：点「管理作息表」定义你的 24 小时作息，'
-                  '智能体会用它对照手机观察，分析你的真实行为',
-                  style: TextStyle(fontSize: 12),
-                ),
-              )
             else ...[
               Text(
-                '${s.defaultIdentity.trim().isEmpty ? '' : '日常身份：${s.defaultIdentity.trim()} · '}'
-                '现在 ${DailyRoutineStore.fmtMm(_now.hour * 60 + _now.minute)}，'
-                '按你的作息应为：${DailyRoutineStore.currentSlotText(s, _now)}',
+                '智能体归纳：$narrative',
                 style: textStyle.bodySmall
                     ?.copyWith(color: colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 4),
+              ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                dense: true,
+                title: Text('近7天手机观察（自动归纳）',
+                    style: textStyle.bodySmall
+                        ?.copyWith(color: colorScheme.onSurfaceVariant)),
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: SelectionArea(
+                      child: Text(
+                        _aggregation,
+                        style: textStyle.bodySmall
+                            ?.copyWith(color: colorScheme.onSurfaceVariant),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
               Text(
-                DailyRoutineStore.summaryText(s),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
+                '当前对应时段：$_currentWindow',
                 style: textStyle.bodySmall
                     ?.copyWith(color: colorScheme.onSurfaceVariant),
               ),
@@ -330,12 +353,14 @@ class _RoutineEntryCardState extends State<_RoutineEntryCard> {
             Align(
               alignment: Alignment.centerLeft,
               child: OutlinedButton.icon(
-                onPressed: () async {
-                  await Get.toNamed(AppRoutes.routinePage);
-                  if (mounted) _reload();
-                },
-                icon: const Icon(Icons.edit_calendar_outlined, size: 18),
-                label: const Text('管理作息表'),
+                onPressed: _building ? null : _rebuild,
+                icon: _building
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.auto_awesome_outlined, size: 18),
+                label: Text(_building ? '建模中…' : '重新建模'),
               ),
             ),
           ],

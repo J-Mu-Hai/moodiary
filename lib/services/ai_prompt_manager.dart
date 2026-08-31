@@ -38,7 +38,7 @@ class AiPromptManager {
     return await loadPrompt('system_base.txt');
   }
 
-  /// 加载 Sonder 角色卡（人格定义；对话/规划/复盘共用，保证同一人格）。
+  /// 加载角色卡（人格定义；对话/规划/复盘共用，保证同一人格）。
   Future<String> loadPersona() async {
     return await loadPrompt('sonder_persona.txt');
   }
@@ -98,7 +98,7 @@ class AiPromptManager {
     buf.writeln(base);
     buf.writeln('\n---');
 
-    // 角色卡：定义"我是谁 + 怎么说话"，覆盖基础人格，让 Sonder 有人味
+    // 角色卡：定义"我是谁 + 怎么说话"，覆盖基础人格，让智能体有人味
     if (persona.isNotEmpty) {
       buf.writeln('\n【角色卡 · 我是谁】');
       buf.writeln(persona);

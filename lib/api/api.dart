@@ -19,6 +19,21 @@ import 'package:moodiary/utils/signature_util.dart';
 import 'package:refreshed/refreshed.dart';
 
 class Api {
+  /// 和风专属 API Host（PrefUtil 配置；为空回落到旧公共域名）。
+  /// 自动剥掉用户可能粘贴的 `https://` 前缀与末尾斜杠。
+  static String _qweatherHost({required String fallback}) {
+    final h = (PrefUtil.getValue<String>('qweatherHost') ?? '').trim();
+    if (h.isEmpty) return fallback;
+    return h.replaceAll(RegExp(r'^https?://'), '').replaceAll(RegExp(r'/$'), '');
+  }
+
+  /// geo 城市查询路径：新专属域名（已配 qweatherHost）下前缀是 `/geo`，
+  /// 旧公共域名（未配，geoapi.qweather.com）直接 `/v2`。
+  static String _qweatherGeoPath() {
+    final h = (PrefUtil.getValue<String>('qweatherHost') ?? '').trim();
+    return h.isEmpty ? '/v2/city/lookup' : '/geo/v2/city/lookup';
+  }
+
   static Future<Stream<String>?> getHunYuan(
       String id, String key, List<Message> messages, int model) async {
     //获取时间戳
@@ -81,7 +96,7 @@ class Api {
         'lang': local
       };
       final res = await HttpUtil().get(
-          'https://geoapi.qweather.com/v2/city/lookup',
+          'https://${_qweatherHost(fallback: 'geoapi.qweather.com')}${_qweatherGeoPath()}',
           parameters: parameters);
       final geo =
           await compute(GeoResponse.fromJson, res.data as Map<String, dynamic>);
@@ -109,7 +124,7 @@ class Api {
       'lang': local
     };
     final res = await HttpUtil().get(
-        'https://devapi.qweather.com/v7/weather/now',
+        'https://${_qweatherHost(fallback: 'devapi.qweather.com')}/v7/weather/now',
         parameters: parameters);
     final weather = await compute(
         WeatherResponse.fromJson, res.data as Map<String, dynamic>);

@@ -47,10 +47,10 @@ class BrainReflect {
       final profile = await MemoryService.getProfile();
       final base = await AiPromptManager().loadPrompt('brain_reflect.txt');
       final persona = await AiPromptManager().loadPersona();
-      // 角色卡注入：反思也是 Sonder 本人，但输出必须遵循下方严格 JSON
+      // 角色卡注入：反思也是同一个智能体，但输出必须遵循下方严格 JSON
       final system = persona.isNotEmpty
           ? '【角色卡 · 你的人格】\n$persona\n\n'
-              '你始终是 Sonder 本人，但这里是复盘场景：输出必须严格遵循下方 JSON 格式，'
+              '你是同一个智能体，但这里是复盘场景：输出必须严格遵循下方 JSON 格式，'
               '不要在 aspects 里添加表情或语气词。\n\n$base'
           : base;
       final input = '''

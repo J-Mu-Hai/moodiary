@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:moodiary/services/agent_brain/daily_routine.dart';
+import 'package:moodiary/services/agent_brain/behavior_model.dart';
 import 'package:moodiary/services/ai_functions.dart';
 import 'package:moodiary/services/ai_prompt_manager.dart';
 import 'package:moodiary/services/memory_service.dart';
@@ -197,26 +197,16 @@ class TriggerEngine {
         ? systemPrompt
         : '$systemPrompt\n\n【关于用户的长期认知画像】\n$profile';
 
-    // 行为作息与监督：用户定义的每日时段（身份×做什么）+ 手机观察对照，
-    // 主动行为同样带着用户行为依据。
-    var promptWithRoutine = promptWithProfile;
+    // 智能体行为认知：智能体通过手机观察自主归纳的 24h 行为作息，
+    // 主动行为同样带着用户行为依据（原「用户自定义作息表」已移除）。
+    var promptWithBehavior = promptWithProfile;
     try {
-      final routine = await DailyRoutineStore.load();
-      if (routine.slots.isNotEmpty) {
-        final now = DateTime.now();
-        final slot = DailyRoutineStore.slotAt(routine, now);
-        final slotText = slot == null
-            ? '（无匹配时段）'
-            : '${slot.identity.trim().isNotEmpty ? slot.identity.trim() : (routine.defaultIdentity.trim().isNotEmpty ? routine.defaultIdentity.trim() : '我')}'
-                '${slot.activity.trim().isEmpty ? '（未填）' : '·${slot.activity.trim()}'}';
-        promptWithRoutine = '$promptWithProfile\n\n【行为作息与监督】\n'
-            '用户作息表：\n${DailyRoutineStore.summaryText(routine)}'
-            '\n当前 ${DailyRoutineStore.fmtMm(now.hour * 60 + now.minute)}'
-            ' → 应处于：$slotText'
-            '\n手机监督：\n${await DailyRoutineStore.supervisionText(routine)}';
+      final behavior = await BehaviorModelStore.contextText();
+      if (behavior.isNotEmpty) {
+        promptWithBehavior = '$promptWithProfile\n\n$behavior';
       }
     } catch (e) {
-      print('[Routine Context Error] $e');
+      print('[Behavior Context Error] $e');
     }
 
     // 3. 调用 AI 生成（通过回调执行，由外部注入 provider）
@@ -224,7 +214,7 @@ class TriggerEngine {
 
     // 根据触发器类型生成不同的用户提示
     final userMsg = _userMessageForTrigger(triggerId);
-    final fullContent = await onGenerate!(promptWithRoutine, userMsg);
+    final fullContent = await onGenerate!(promptWithBehavior, userMsg);
     if (fullContent == null || fullContent.isEmpty) return null;
 
     // 4. 拆句

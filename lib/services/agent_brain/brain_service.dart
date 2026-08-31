@@ -73,10 +73,13 @@ class BrainService {
     if (_busy) return;
     _busy = true;
     try {
-      // 每日例行（确定性，不经大脑决策）：0 点后创建夜间归位任务
+      // 每日例行（确定性，不经大脑决策）：0 点后创建夜间归位任务；
+      // 23:30 后创建当日行为建模任务（晚间归位复盘完再重算行为模型）
       await _checkNightlyReview();
+      await _checkBehaviorModel();
       await _dispatchDueTasks();
       await _watchdogRunning();
+      await _watchdogWaiting();
       await _monitor.checkSignals();
     } catch (e) {
       print('[BrainService] tick error: $e');
@@ -123,6 +126,47 @@ class BrainService {
       print('[BrainService] 已创建晚间复盘任务（$today）');
     } catch (e) {
       print('[BrainService] 晚间复盘调度失败: $e');
+    }
+  }
+
+  /// 每日例行「行为建模」的确定性调度（不经大脑决策，可靠不靠 AI 自觉）。
+  ///
+  /// 每天 23:30 之后第一次 tick（App 存活时）创建一次 build_behavior_model
+  /// 任务，scheduledAt=now 到点立即派发，用当天为止的行为观察重新归纳用户
+  /// 24h 行为作息。用 PrefUtil 记录跨天防重复；当天已存在 pending/running
+  /// 的建模任务（如派发失败待重试）也视为已调度。
+  Future<void> _checkBehaviorModel() async {
+    try {
+      final now = DateTime.now();
+      // 23:30 后进入行为建模窗口（晚于 23:00 的夜间归位，先复盘再建模）
+      if (now.hour < 23 || (now.hour == 23 && now.minute < 30)) return;
+      final today = '${now.year}-${now.month}-${now.day}';
+      final last = PrefUtil.getValue<String>('behaviorModelLastAt') ?? '';
+      if (last == today) return;
+
+      final existing = await AgentTaskStore.query(action: 'build_behavior_model');
+      final todayCreated = existing.any((t) {
+        final c = t.createdAt;
+        return '${c.year}-${c.month}-${c.day}' == today &&
+            (t.status == 'pending' || t.status == 'running');
+      });
+      if (todayCreated) {
+        await PrefUtil.setValue<String>('behaviorModelLastAt', today);
+        return;
+      }
+
+      await AgentTaskStore.add(AgentTask(
+        title: '智能体行为建模',
+        kind: 'scheduled',
+        action: 'build_behavior_model',
+        params: {'basicTask': true}, // 智能体基础任务之一（实验室按此分组）
+        scheduledAt: now,
+        priority: 1,
+      ));
+      await PrefUtil.setValue<String>('behaviorModelLastAt', today);
+      print('[BrainService] 已创建行为建模任务（$today）');
+    } catch (e) {
+      print('[BrainService] 行为建模调度失败: $e');
     }
   }
 
@@ -212,6 +256,35 @@ class BrainService {
         t.feedback = [...t.feedback, '[执行] 超时兜底完成'];
         await AgentTaskStore.update(t);
       }
+    }
+  }
+
+  /// 看门狗 2：等待回应的任务长时间无回应 → 交大脑判定收尾（不再静默结束）。
+  ///
+  /// 「所有任务都需要结果输入大脑，大脑判定结束才可以真正结束」的兜底：
+  /// ask_user/start_chat 若用户始终没回应，不能无限挂起，也不能像之前那样被
+  /// 静默置 done——把「用户长时间未回应」作为收尾原因送进大脑，由大脑判定
+  /// 结束（通常询问已过时 → done，说明原因）还是继续等待。每个任务只判定
+  /// 一次（params.staleJudged 标记），避免每分钟轮询重复烧 AI。
+  static const Duration waitingUserStaleHours = Duration(hours: 6);
+
+  Future<void> _watchdogWaiting() async {
+    final waiting = await AgentTaskStore.query(status: 'waitingUser');
+    final now = DateTime.now();
+    for (final t in waiting) {
+      if (t.params['staleJudged'] == true) continue;
+      if (now.difference(t.updatedAt).inHours < waitingUserStaleHours.inHours) {
+        continue;
+      }
+      t.params['staleJudged'] = true;
+      await AgentTaskStore.update(t);
+      print('[BrainService] 任务「${t.title}」超时未回应，交大脑判定收尾');
+      unawaited(AgentBrain.finalizeTask(
+        t,
+        '用户超过 ${waitingUserStaleHours.inHours} 小时未回应，'
+            '询问/会话可能已过时',
+        judge: true,
+      ));
     }
   }
 

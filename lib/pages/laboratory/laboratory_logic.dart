@@ -94,6 +94,13 @@ class LaboratoryLogic extends GetxController {
     update();
   }
 
+  /// 设置和风专属 API Host（2026 起旧公共域名停用，需填控制台专属域名）。
+  Future<void> setQweatherHost({required String host}) async {
+    await PrefUtil.setValue<String>(
+        'qweatherHost', host.trim().replaceAll(RegExp(r'^https?://'), ''));
+    update();
+  }
+
   Future<void> setTiandituKey({required String key}) async {
     await PrefUtil.setValue<String>('tiandituKey', key);
     update();
@@ -130,35 +137,6 @@ class LaboratoryLogic extends GetxController {
     } catch (e) {
       NoticeUtil.showToast('沉淀失败: $e');
       return '沉淀失败: $e';
-    }
-  }
-
-  // ─── 环境感知 + 语音播报（演示） ─────────────────────
-
-  /// 获取环境快照 → 生成播报句 → 豆包 TTS 合成并播放
-  Future<void> environmentBroadcast() async {
-    NoticeUtil.showToast('正在获取环境…');
-    try {
-      final snap = await EnvironmentSensor.getSnapshot();
-      if (snap == null) {
-        NoticeUtil.showToast('环境获取失败：请检查网络或 key 配置');
-        return;
-      }
-      final p = snap['province'].toString();
-      final c = snap['city'].toString();
-      final d = snap['district'].toString();
-      final city = '$p${(c.isNotEmpty && !p.contains(c) ? c : '')}$d';
-      final weather = snap['weather'].toString();
-      final temp = snap['temp'].toString();
-      final sentence = weather.isNotEmpty
-          ? '你现在在$city，天气$weather，$temp 摄氏度。'
-          : '你现在在$city。';
-      NoticeUtil.showToast('正在合成语音…');
-      final ok = await TtsSpeaker.speak(sentence);
-      NoticeUtil.showToast(
-          ok ? '播放完成' : '语音播放失败: ${TtsSpeaker.lastError}');
-    } catch (e) {
-      NoticeUtil.showToast('环境播报失败：$e');
     }
   }
 
@@ -266,6 +244,24 @@ class LaboratoryLogic extends GetxController {
     return await AgentBrain.handleSignal(signal, force: true);
   }
 
+  /// 文字直接触发大脑：把用户描述的情况包装成信号送进大脑观察决策输出。
+  ///
+  /// 替代旧的「13 个预置模拟信号按钮」——不再按类型细分，而是让用户自由描述
+  /// 场景（如「我刚写完一篇日记说今天心情很好」），大脑照常走 冷却→组装上下文
+  /// →AI 决策 全流程，实验室据此观察「这个输入 → 大脑产出什么」。
+  Future<String> triggerCustomSignal(String text) async {
+    final t = text.trim();
+    if (t.isEmpty) return '请输入要送入大脑的情况描述';
+    return await AgentBrain.handleSignal(
+      BrainSignal(
+        type: 'manual_text',
+        summary: '【实验室手动输入】$t',
+        data: {'manual': true, 'source': 'lab_text'},
+      ),
+      force: true, // 实验室观察用，绕过冷却
+    );
+  }
+
   /// 最近一次大脑决策的输入/输出（脑 IO 监督面板读取）。
   Future<Map<String, dynamic>?> getLastBrainDecision() async {
     final s = PrefUtil.getValue<String>('brainLastDecision');
@@ -341,4 +337,34 @@ class LaboratoryLogic extends GetxController {
     task.feedback = [...task.feedback, '[实验室] 用户取消'];
     await AgentTaskStore.update(task);
   }
+
+  // ─── 环境感知 + 语音播报（演示） ─────────────────────
+
+  /// 获取环境快照 → 生成播报句 → 豆包 TTS 合成并播放
+  Future<void> environmentBroadcast() async {
+    NoticeUtil.showToast('正在获取环境…');
+    try {
+      final snap = await EnvironmentSensor.getSnapshot();
+      if (snap == null) {
+        NoticeUtil.showToast('环境获取失败：请检查网络或 key 配置');
+        return;
+      }
+      final p = snap['province'].toString();
+      final c = snap['city'].toString();
+      final d = snap['district'].toString();
+      final city = '$p${(c.isNotEmpty && !p.contains(c) ? c : '')}$d';
+      final weather = snap['weather'].toString();
+      final temp = snap['temp'].toString();
+      final sentence = weather.isNotEmpty
+          ? '你现在在$city，天气$weather，$temp 摄氏度。'
+          : '你现在在$city。';
+      NoticeUtil.showToast('正在合成语音…');
+      final ok = await TtsSpeaker.speak(sentence);
+      NoticeUtil.showToast(
+          ok ? '播放完成' : '语音播放失败: ${TtsSpeaker.lastError}');
+    } catch (e) {
+      NoticeUtil.showToast('环境播报失败：$e');
+    }
+  }
+
 }

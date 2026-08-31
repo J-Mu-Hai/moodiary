@@ -42,6 +42,10 @@ class PrefUtil {
     'fontTheme',
     //和风key
     'qweatherKey',
+    //和风专属 API Host（2026 起旧公共域名停用，需填控制台专属域名）
+    'qweatherHost',
+    //地点覆盖（AI 函数 set_user_location 写入：用户/智能体修正的省市区）
+    'locationOverride',
     'tencentId',
     'tencentKey',
     'tiandituKey',
@@ -139,6 +143,10 @@ class PrefUtil {
     // 智能体元数据同步：本地"上次应用的服务器标记"（key → mtime，见
     // webdav_util.syncMetadata，用于判断另一端是否又改了）
     'metaSyncStamp',
+    // 智能体行为认知库（behavior_model.dart）：AI 归纳的用户 24h 行为画像
+    'behaviorModel',
+    // 行为建模每日调度的跨天防重（brain_service._checkBehaviorModel）
+    'behaviorModelLastAt',
   };
 
   static Future<void> initPref() async {

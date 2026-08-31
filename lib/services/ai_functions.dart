@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:moodiary/presentation/isar.dart';
+import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/utils/environment_sensor.dart';
 import 'package:moodiary/utils/session_merger.dart';
 import 'package:moodiary/utils/tts_speaker.dart';
+
+import 'agent_brain/behavior_model.dart';
 
 /// AI 函数调用返回的封装
 class AiFunctionResult {
@@ -44,8 +49,6 @@ class AiFunctionSystem {
           return await _getCategories();
         case 'getUniversalValues':
           return await _getUniversalValues(params['topic']);
-        case 'get_lore':
-          return await _getLore(params['topic']);
         case 'env_snapshot':
           return await _getEnvSnapshot();
         case 'speak':
@@ -53,6 +56,12 @@ class AiFunctionSystem {
         case 'get_usage_timeline':
           return await _getUsageTimeline(
               params['date'], params['startHour'], params['endHour']);
+        case 'get_behavior_summary':
+          return await _getBehaviorSummary(
+              params['days'], params['windowMinutes']);
+        case 'set_user_location':
+          return await _setUserLocation(
+              params['province'], params['city'], params['district']);
         default:
           return null;
       }
@@ -349,62 +358,7 @@ class AiFunctionSystem {
         .toList();
   }
 
-  /// 7. 获取自己的档案（按主题从 character_bible.md 检索）
-  ///
-  /// 温晚照的记忆库：角色卡只装"说话风格"这一层常驻，遇到自己记不清的细节
-  /// （老莫年轻时的事、夏迟的职业、不寐的设定……）就调用这个查档案。
-  /// 与 _getUniversalValues 同一套「按需加载」模式，避免把整本档案塞进每次对话。
-  static Future<AiFunctionResult> _getLore(String? topic) async {
-    try {
-      final raw = await rootBundle.loadString('assets/ai/character_bible.md');
-      final sections = _splitMarkdownSections(raw);
-
-      if (sections.isEmpty) {
-        return AiFunctionResult(
-          functionName: 'get_lore',
-          data: null,
-          summary: '档案库当前为空。',
-        );
-      }
-
-      // 按主题关键词匹配章节（复用价值观的标题/正文打分逻辑）
-      final matched = _matchValueSections(sections, topic);
-
-      String summary;
-      if (matched.isEmpty) {
-        // 没匹配到，给出目录让 AI 换个主题词
-        final titles = sections.map((s) => s.title).join('\n');
-        summary = '档案里没有"$topic"的记录。你可以记得的：\n$titles\n\n请用上面的条目重新调用。';
-      } else {
-        final buf = StringBuffer();
-        for (final s in matched) {
-          buf.writeln('## ${s.title}');
-          buf.writeln(s.content);
-          buf.writeln();
-        }
-        summary = buf.toString();
-      }
-
-      // 截断防止上下文过长
-      if (summary.length > 2000) {
-        summary = '${summary.substring(0, 2000)}\n…(已截断，如需完整内容请换更具体的主题词)';
-      }
-
-      return AiFunctionResult(
-        functionName: 'get_lore',
-        data: matched.map((s) => s.title).toList(),
-        summary: summary,
-      );
-    } catch (e) {
-      return AiFunctionResult(
-        functionName: 'get_lore',
-        data: null,
-        summary: '档案加载失败: $e',
-      );
-    }
-  }
-
-  /// 8. 环境快照：用户当前城市 + 实时天气（IP 定位，零权限）
+  /// 7. 环境快照：用户当前城市 + 实时天气（IP 定位，零权限）
   static Future<AiFunctionResult> _getEnvSnapshot() async {
     final snap = await EnvironmentSensor.getSnapshot();
     if (snap == null) {
@@ -505,6 +459,74 @@ class AiFunctionSystem {
       functionName: 'get_usage_timeline',
       data: list,
       summary: summary,
+    );
+  }
+
+  /// 11. 获取智能体行为认知：近 N 天观察的分钟窗口聚合 + 一句话行为画像。
+  ///
+  /// 阶段 4「行为认知自主化」的工具面：让模型在对话里能查到「用户一天 24h
+  /// 大致在做什么」的已归纳结论，与 get_usage_timeline（原始时间线）互补。
+  static Future<AiFunctionResult> _getBehaviorSummary(
+      String? daysStr, String? windowStr) async {
+    final days = int.tryParse(daysStr ?? '') ?? 7;
+    final window = int.tryParse(windowStr ?? '') ?? 120;
+    final agg = await BehaviorModelStore.aggregationText(
+        days: days, windowMinutes: window);
+    final model = await BehaviorModelStore.load();
+    final narrative = model == null || model.narrative.isEmpty
+        ? '（尚未建模，将自动归纳）'
+        : model.narrative;
+    final current = await BehaviorModelStore.currentWindowText(DateTime.now(),
+        days: days, windowMinutes: window);
+    return AiFunctionResult(
+      functionName: 'get_behavior_summary',
+      data: {
+        'narrative': model?.narrative ?? '',
+        'updatedAt': model?.updatedAt.toIso8601String() ?? '',
+        'windowMinutes': window,
+        'days': days,
+      },
+      summary: '【智能体行为认知】\n'
+          '近$days天手机观察（自动归纳）：\n$agg\n'
+          '智能体归纳：$narrative\n'
+          '当前对应时段：$current',
+    );
+  }
+
+  /// 12. 修正用户所在地：写入地点覆盖，之后所有环境快照以它为准。
+  ///
+  /// IP 定位的行政区名不精确（海淀可能被识别成西城），当对话/信号里用户
+  /// 明确说出所在地（如「我在北京海淀」），智能体调用本函数把省市区写进
+  /// `locationOverride`，EnvironmentSensor 取快照时优先用覆盖值。
+  /// province/city/district 均允许缺省——缺省的维度保持原样不覆盖。
+  static Future<AiFunctionResult> _setUserLocation(String? province,
+      String? city, String? district) async {
+    final p = province?.trim() ?? '';
+    final c = city?.trim() ?? '';
+    final d = district?.trim() ?? '';
+    if (p.isEmpty && c.isEmpty && d.isEmpty) {
+      return AiFunctionResult(
+        functionName: 'set_user_location',
+        data: null,
+        summary: '请提供至少一个地点信息（省/市/区）。',
+      );
+    }
+
+    // 读旧覆盖值，缺省的维度沿用旧值（首次写入时沿用 IP 定位的近似值）
+    final old = EnvironmentSensor.overrideValue;
+    final merged = <String, String>{
+      'province': p.isNotEmpty ? p : (old?['province'] ?? ''),
+      'city': c.isNotEmpty ? c : (old?['city'] ?? ''),
+      'district': d.isNotEmpty ? d : (old?['district'] ?? ''),
+    };
+    await PrefUtil.setValue<String>(
+        'locationOverride', jsonEncode(merged));
+
+    final place = '${merged['province']}${(merged['city']!.isNotEmpty && !merged['province']!.contains(merged['city']!) ? merged['city'] : '')}${merged['district']}';
+    return AiFunctionResult(
+      functionName: 'set_user_location',
+      data: merged,
+      summary: '已把用户所在地修正为「$place」，之后的地点判断以此为准。',
     );
   }
 }

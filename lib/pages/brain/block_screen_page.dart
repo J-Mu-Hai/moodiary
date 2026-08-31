@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:moodiary/services/agent_brain/agent_brain.dart';
 import 'package:moodiary/services/agent_brain/agent_task.dart';
 import 'package:moodiary/services/agent_brain/behavior_observations.dart';
 import 'package:moodiary/services/agent_brain/brain_reflect.dart';
@@ -98,9 +99,10 @@ class _BlockScreenPageState extends State<BlockScreenPage> {
       try {
         final task = await AgentTaskStore.byId(_taskId!);
         if (task != null) {
-          task.status = 'done';
-          task.feedback = [...task.feedback, '[阻断页] $feedback'];
-          await AgentTaskStore.update(task);
+          // 结果送大脑判定：锁屏是否真的达成（等到结束 / 提前离开）由大脑
+          // 决定任务是否结束，结果落进决策日志（kind=task_result）
+          unawaited(
+              AgentBrain.finalizeTask(task, '阻断结束：$feedback', judge: true));
           // 反思学习回路：用户是否配合锁屏（等到结束 / 中途离开）值得沉淀
           unawaited(BrainReflect.maybeReflect(task));
         }

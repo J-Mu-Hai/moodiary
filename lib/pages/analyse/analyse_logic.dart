@@ -4,7 +4,7 @@ import 'package:calendar_date_picker2/calendar_date_picker2.dart';
 import 'package:flutter/material.dart';
 import 'package:moodiary/common/models/ai_provider.dart';
 import 'package:moodiary/presentation/isar.dart';
-import 'package:moodiary/services/agent_brain/daily_routine.dart';
+import 'package:moodiary/services/agent_brain/behavior_model.dart';
 import 'package:moodiary/services/ai_functions.dart';
 import 'package:moodiary/services/ai_provider_manager.dart';
 import 'package:moodiary/utils/array_util.dart';
@@ -93,10 +93,10 @@ class AnalyseLogic extends GetxController {
           .map((e) => '心情 ${e.key}: ${e.value} 次')
           .join('\n');
 
-      // 行为作息：用户定义的每日时段（身份×做什么）+ 手机监督，分析行为的重要依据。
-      String routineBlock = '';
+      // 智能体行为认知：智能体通过手机观察自主归纳的 24h 行为作息，分析行为的重要依据。
+      String behaviorBlock = '';
       try {
-        routineBlock = await routineContextText();
+        behaviorBlock = await BehaviorModelStore.contextText();
       } catch (_) {}
 
       final systemPrompt = '''
@@ -119,7 +119,7 @@ ${diaryResult?.summary ?? '暂无日记数据'}
 
 情绪统计：
 $moodSummary
-${routineBlock.isEmpty ? '' : '\n$routineBlock'}
+${behaviorBlock.isEmpty ? '' : '\n$behaviorBlock'}
 ''';
 
       // 3. 调用 AI
@@ -142,18 +142,4 @@ ${routineBlock.isEmpty ? '' : '\n$routineBlock'}
 
   String _fmt(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
-  /// 行为作息 + 手机监督文本（用户定义的 24h 作息表 + 智能体观察到的实际），
-  /// 作为 AI 分析用户行为的重要依据。
-  Future<String> routineContextText() async {
-    final now = DateTime.now();
-    final s = await DailyRoutineStore.load();
-    if (s.slots.isEmpty) return '';
-    return '【行为作息】\n'
-        '你的作息表：\n${DailyRoutineStore.summaryText(s)}'
-        '\n现在 ${DailyRoutineStore.fmtMm(now.hour * 60 + now.minute)}，'
-        '你应处于：${DailyRoutineStore.currentSlotText(s, now)}'
-        '\n手机监督（计划 vs 近 3 天实际观察）：'
-        '\n${await DailyRoutineStore.supervisionText(s)}';
-  }
 }

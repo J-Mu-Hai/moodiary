@@ -423,8 +423,6 @@ class WebDavUtil {
     'focusMode',
     // 统一作息库（daily_rhythm.dart）：起床时间/分时段计划/完成情况
     'dailyRhythm',
-    // 行为作息表（daily_routine.dart）：用户自定义 24h 时段（身份×做什么）
-    'dailyRoutine',
   ];
 
   /// 本地"上次应用的服务器标记"（key → {m: 服务器 mtime, h: 内容指纹}），

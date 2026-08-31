@@ -12,11 +12,11 @@ import 'package:moodiary/utils/environment_sensor.dart';
 
 import 'agent_rule.dart';
 import 'agent_task.dart';
+import 'behavior_model.dart';
 import 'behavior_observations.dart';
 import 'brain_reflect.dart';
 import 'brain_service.dart';
 import 'daily_rhythm.dart';
-import 'daily_routine.dart';
 import 'focus_mode.dart';
 
 /// 大脑信号 — 代码机械监督 / 用户规则 / 任务变化 送入大脑的输入。
@@ -61,6 +61,7 @@ class AgentBrain {
     'update_profile',
     'analyze_diaries',
     'open_diary',
+    'build_behavior_model',
   ];
 
   static const List<String> validKinds = [
@@ -112,7 +113,7 @@ class AgentBrain {
     // 角色卡注入：规划者也保持同一人格，但输出必须严格遵循 brain_plan 的 JSON
     final personaBlock = persona.isNotEmpty
         ? '【角色卡 · 你的人格】\n$persona\n\n'
-            '你始终是 Sonder 本人，但这里你是后台规划者：输出必须严格遵循下方格式，'
+            '你是同一个智能体，但这里你是后台规划者：输出必须严格遵循下方格式，'
             '不要在 JSON 里添加表情或语气词。\n\n'
         : '';
     final system =
@@ -365,6 +366,94 @@ ${task.feedback.join('\n')}
     return '任务「${task.title}」已结束${insight.isNotEmpty ? '（$insight）' : ''}';
   }
 
+  /// 统一任务收尾：把任务的执行结果/收尾原因写进反馈，送大脑判定后落终态。
+  ///
+  /// 「所有任务的结果都要输入大脑，大脑判定结束才算真正结束」的实现：
+  /// - [judge]=true：调用 AI 判定 done/wait。用于结果有分歧、或该不该结束
+  ///   需要判断的收尾——用户长时间未回应、阻断页结束、消息注入失败升级等。
+  ///   AI 失败时 fail-open 按 done 收尾（避免任务卡死），判定结果落决策日志。
+  /// - [judge]=false：机械性内部任务（语音/画像/分析/复盘/建模等），执行结果
+  ///   确定，不额外烧一次 AI；结果直接落进大脑决策日志（kind=task_result）
+  ///   后置 done，保证大脑「看得到」每一个任务的结局。
+  static Future<void> finalizeTask(AgentTask task, String result,
+      {bool judge = false}) async {
+    task.feedback = [...task.feedback, '[结果] $result'];
+
+    // 机械性内部任务：结果确定，直接落终态 + 记录决策日志，不烧 AI
+    if (!judge) {
+      task.status = 'done';
+      await AgentTaskStore.update(task);
+      await _appendTaskResult(task, result, 'done', '机械性内部任务，结果确定');
+      return;
+    }
+
+    // 需要判断的收尾：交 AI 判定 done/wait
+    final provider = AiProviderManager().currentProvider;
+    if (provider == null || !provider.isConfigured) {
+      task.status = 'done';
+      task.feedback = [...task.feedback, '[大脑] 结束判定：AI 未配置，默认结束'];
+      await AgentTaskStore.update(task);
+      await _appendTaskResult(task, result, 'done', 'AI 未配置，默认结束');
+      return;
+    }
+
+    final prompt = '''
+你是 Moodsonder 智能体大脑。一个任务的收尾原因需要你判定它是否真正结束。
+任务：${task.title}
+类型：${task.kind} / ${task.action}
+历史反馈：
+${task.feedback.join('\n')}
+收尾原因：$result
+判断规则：
+- 若结果已达成、任务已无意义、或收尾原因说明此事已告一段落 → decision=done
+- 若任务仍有价值、需要继续等待用户配合 → decision=wait
+- 若收尾原因是「用户长时间未回应」，且询问的时机已过 → 默认 done（说明原因即可）
+输出严格 JSON（不要其他内容）：{"decision":"done|wait","reason":"简短理由"}''';
+
+    var decision = 'done';
+    var reason = '';
+    try {
+      final stream = await provider.chat(messages: [
+        AIMessage(role: 'user', content: prompt),
+      ]);
+      final sb = StringBuffer();
+      await for (final chunk in stream) {
+        sb.write(chunk);
+      }
+      final parsed = _parseDecision(sb.toString().trim());
+      decision = parsed.decision;
+      reason = parsed.reason;
+    } catch (e) {
+      print('[AgentBrain] 收尾判定失败: $e');
+    }
+
+    if (decision == 'wait') {
+      task.status = 'waitingUser';
+      task.feedback = [...task.feedback, '[大脑] 继续等待：$reason'];
+      await AgentTaskStore.update(task);
+      await _appendTaskResult(task, result, 'wait', reason);
+      return;
+    }
+
+    task.status = 'done';
+    task.feedback = [...task.feedback, '[大脑] 任务结束：$reason'];
+    await AgentTaskStore.update(task);
+    await _appendTaskResult(task, result, 'done', reason);
+  }
+
+  /// 把一次任务收尾记录进大脑决策日志（kind=task_result），与 signal_skipped /
+  /// decision / feedback 并列，实验室「输入/输出记录」据此可见任务结局。
+  static Future<void> _appendTaskResult(
+      AgentTask task, String result, String decision, String reason) async {
+    await _appendLog({
+      'kind': 'task_result',
+      'time': DateTime.now().toIso8601String(),
+      'summary': '任务「${task.title}」收尾：$result → 大脑判定 $decision',
+      'input': '任务「${task.title}」· 收尾原因：$result',
+      'output': '大脑判定：$decision${reason.isNotEmpty ? '（$reason）' : ''}',
+    });
+  }
+
   /// 助手对话 hook：用户发来一条消息时，把最早的 waitingUser 任务当作反馈处理。
   /// 无等待任务时返回 null（调用方继续正常对话）。
   static Future<String?> processWaitingUserFeedback(String userMessage) async {
@@ -465,23 +554,13 @@ ${task.feedback.join('\n')}
     }
     buf.writeln();
 
-    // 行为作息与监督：用户自定义的每日时段（身份×做什么）是计划线，
-    // 智能体手机观察是实际线，对照拼出「真实行为」，是分析用户行为的重要依据。
-    // 同时保留原「常做行为模板/最近观察」两行作为监督的补充。
+    // 智能体行为认知：智能体通过手机观察自动归纳的「一天 24h 每时段大致在
+    // 做什么、作息节律如何」，是分析用户行为、决策下一步的重要依据。原
+    // 「用户自定义作息表」已移除（改由智能体自主建模），手机观察数据源
+    // 保留：近 N 天窗口聚合（contextText 内）+ 最近观察（recentText）。
     try {
-      final routine = await DailyRoutineStore.load();
-      final slot = DailyRoutineStore.slotAt(routine, now);
-      buf.writeln('【行为作息与监督】');
-      buf.writeln('用户作息表（用户定义）：');
-      buf.writeln(DailyRoutineStore.summaryText(routine));
-      final slotText = slot == null
-          ? '（无匹配时段）'
-          : '${slot.identity.trim().isNotEmpty ? slot.identity.trim() : (routine.defaultIdentity.trim().isNotEmpty ? routine.defaultIdentity.trim() : '我')}'
-              '${slot.activity.trim().isEmpty ? '（未填）' : '·${slot.activity.trim()}'}';
-      buf.writeln('当前 ${_hm(now)} → 应处于：$slotText');
-      buf.writeln('手机监督（计划 vs 近3天实际观察）：');
-      buf.writeln(await DailyRoutineStore.supervisionText(routine));
-      buf.writeln('常做行为模板：${await BehaviorObservationStore.topBehaviorsText(now)}');
+      buf.writeln('【智能体行为认知】');
+      buf.writeln(await BehaviorModelStore.contextText(now: now));
       buf.writeln('最近观察：${await BehaviorObservationStore.recentText(limit: 3)}');
       buf.writeln();
     } catch (_) {

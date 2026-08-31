@@ -17,7 +17,9 @@ import 'package:moodiary/utils/session_merger.dart';
 import 'package:moodiary/utils/tts_speaker.dart';
 import 'package:refreshed/refreshed.dart';
 
+import 'agent_brain.dart';
 import 'agent_task.dart';
+import 'behavior_model.dart';
 import 'behavior_observations.dart';
 import 'daily_rhythm.dart';
 import 'diary_ai_read.dart';
@@ -59,6 +61,9 @@ class AgentExecutor {
         case 'nightly_review':
           await _execNightlyReview(task);
           break;
+        case 'build_behavior_model':
+          await _execBuildBehaviorModel(task);
+          break;
       }
       final after = await AgentTaskStore.byId(task.id);
       final last =
@@ -84,27 +89,19 @@ class AgentExecutor {
   static Future<void> _execTts(AgentTask task) async {
     final text = task.params['text']?.toString() ?? '';
     if (text.trim().isEmpty) {
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] 无朗读文本'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, '无朗读文本，跳过');
       return;
     }
     final ok = await TtsSpeaker.speak(text);
-    task.status = 'done';
-    task.feedback = [
-      ...task.feedback,
-      ok ? '[执行] 已语音播报' : '[执行] 语音播报失败: ${TtsSpeaker.lastError}',
-    ];
-    await AgentTaskStore.update(task);
+    await AgentBrain.finalizeTask(task,
+        ok ? '已语音播报' : '语音播报失败: ${TtsSpeaker.lastError}');
   }
 
   static Future<void> _execStartChat(AgentTask task,
       {required bool ask}) async {
     final provider = AiProviderManager().currentProvider;
     if (provider == null || !provider.isConfigured) {
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] AI 未配置，跳过发起会话'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, 'AI 未配置，跳过发起会话');
       return;
     }
 
@@ -114,26 +111,39 @@ class AgentExecutor {
         ? '（智能体需要你的配合）$question'
         : text;
     if (content.trim().isEmpty) {
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] 无会话内容'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, '无会话内容，跳过');
       return;
     }
 
-    // 已有等待回应的会话时，不再重复发起（防大脑连发多个 start_chat 骚扰）
+    // 已有等待回应的会话：曾把它直接置 done 导致「询问中午计划的会话已发起、
+    // 却没收到、也没回复就结束了」——旧 waitingUser 把新 ask_user 静默吞掉。
+    // 策略：同一时段的计划询问已存在则跳过（不重复骚扰）；不同会话则用新会话
+    // 取代旧会话（旧任务取消并注明原因，不再永远卡在 waitingUser 挡住后续）。
     final waiting = await AgentTaskStore.query(status: 'waitingUser');
-    if (waiting.any((t) =>
-        t.id != task.id &&
-        (t.action == 'start_chat' || t.action == 'ask_user'))) {
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] 已有等待回应的会话，跳过重复发起'];
-      await AgentTaskStore.update(task);
-      return;
+    final stale = waiting
+        .where((t) =>
+            t.id != task.id &&
+            (t.action == 'start_chat' || t.action == 'ask_user'))
+        .toList();
+    if (stale.isNotEmpty) {
+      final newPeriod = task.params['planPeriod']?.toString();
+      final samePeriod = newPeriod != null &&
+          newPeriod.isNotEmpty &&
+          stale.any((t) => t.params['planPeriod']?.toString() == newPeriod);
+      if (samePeriod) {
+        // 同一时段的计划询问已存在（防御，正常不该发生）→ 放弃本次
+        await AgentBrain.finalizeTask(task, '同一时段的询问已存在，跳过（${task.title}）');
+        return;
+      }
+      // 取代：旧会话被新会话替换，避免两个问题同时悬空
+      for (final old in stale) {
+        old.status = 'cancelled';
+        old.feedback = [...old.feedback, '[执行] 被新会话「${task.title}」取代'];
+        await AgentTaskStore.update(old);
+      }
     }
 
     // ── 让「发起会话」真的抵达用户：语音提醒 → 回前台 → 切对话页 → 注入 ──
-    // 之前只在助手页「未打开」时才走这套流程；助手页一旦开过（fenix 注册常驻
-    // 栈中），后续任务全部变成静默注入，用户完全感知不到 → 已修复为每次执行。
 
     // 1. 语音提醒：仅当蓝牙耳机连接时播报开场白（耳机在 = 用户能私密听到，
     //    公开场合不会外放尴尬）；无耳机则跳过语音，直接切对话页。
@@ -176,13 +186,26 @@ class AgentExecutor {
       }
     }
 
+    if (!injected) {
+      // 注入失败：用户根本没收到消息。不置 waitingUser（否则会变成卡死的
+      // 「等待回应」幽灵任务，还会挡住后续会话），保持 pending 稍后重试；
+      // 3 次仍失败则交大脑判定收尾（fail-open，不无限重试）。
+      final retries = task.feedback.where((f) => f.contains('注入失败')).length;
+      if (retries >= 2) {
+        await AgentBrain.finalizeTask(task,
+            '多次尝试向用户发起会话但消息注入失败（用户可能不在 App 内）',
+            judge: true);
+        return;
+      }
+      task.status = 'pending';
+      task.scheduledAt = DateTime.now().add(const Duration(minutes: 2));
+      task.feedback = [...task.feedback, '[执行] 消息注入失败，2 分钟后重试'];
+      await AgentTaskStore.update(task);
+      return;
+    }
+
     task.status = 'waitingUser';
-    task.feedback = [
-      ...task.feedback,
-      injected
-          ? '[执行] 已发起会话，等待用户回应'
-          : '[执行] 已跳转助手页但未注入内容',
-    ];
+    task.feedback = [...task.feedback, '[执行] 已发起会话，等待用户回应'];
     await AgentTaskStore.update(task);
   }
 
@@ -191,9 +214,7 @@ class AgentExecutor {
     final running =
         await AgentTaskStore.query(status: 'running', action: 'block_screen');
     if (running.any((t) => t.id != task.id)) {
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] 已有阻断页进行中，跳过重复开页'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, '已有阻断页进行中，跳过重复开页');
       return;
     }
     final duration = (task.params['durationMinutes'] as num?)?.toInt() ?? 15;
@@ -225,9 +246,7 @@ class AgentExecutor {
 
   static Future<void> _execUpdateProfile(AgentTask task) async {
     final summary = await MemoryService.consolidate();
-    task.status = 'done';
-    task.feedback = [...task.feedback, '[执行] 画像沉淀：$summary'];
-    await AgentTaskStore.update(task);
+    await AgentBrain.finalizeTask(task, '画像沉淀：$summary');
   }
 
   /// 定位并打开一篇指定日记（智能体「控制软件进入某个日记」能力）。
@@ -238,9 +257,7 @@ class AgentExecutor {
   static Future<void> _execOpenDiary(AgentTask task) async {
     final diary = await _resolveDiary(task.params);
     if (diary == null) {
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] 未找到匹配日记'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, '未找到匹配日记');
       return;
     }
 
@@ -255,15 +272,11 @@ class AgentExecutor {
         arguments: [diary.clone(), false],
       ));
     } catch (e) {
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] 打开日记失败: $e'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, '打开日记失败: $e');
       return;
     }
 
-    task.status = 'done';
-    task.feedback = [...task.feedback, '[执行] 已打开日记《$title》'];
-    await AgentTaskStore.update(task);
+    await AgentBrain.finalizeTask(task, '已打开日记《$title》');
   }
 
   /// 按 params 解析目标日记：date → 当天第一篇；query（含今天/昨天归一化）→
@@ -308,17 +321,13 @@ class AgentExecutor {
       // 无法分析：标记已读并结束，避免该任务反复重试
       final unread = await DiaryAiReadStore.unreadDiaries(limit: 10);
       await DiaryAiReadStore.markReadAll(unread, note: 'AI 未配置，跳过分析');
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] AI 未配置，已跳过并标记已读'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, 'AI 未配置，已跳过并标记已读');
       return;
     }
 
     final diaries = await DiaryAiReadStore.unreadDiaries(limit: 10);
     if (diaries.isEmpty) {
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] 没有未读日记'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, '没有未读日记');
       return;
     }
 
@@ -384,16 +393,12 @@ $buf''';
       await DiaryAiReadStore.markReadAll(diaries,
           note: profile.take(2).join('；'));
 
-      task.status = 'done';
-      task.feedback = [...task.feedback, fb.toString()];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, fb.toString());
     } catch (e) {
       // AI 调用失败：不标记已读，留给下次 diary_stable 重试（避免丢数据）；
-      // 任务本身置 done，避免执行器反复重试同一任务。
+      // 任务本身收尾，避免执行器反复重试同一任务。
       print('[Executor] analyze_diaries 调用失败: $e');
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[执行] 分析失败（未标记已读，可重试）: $e'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, '分析失败（未标记已读，可重试）: $e');
     }
   }
 
@@ -412,9 +417,7 @@ $buf''';
 
     if (provider == null || !provider.isConfigured) {
       // AI 未配置：不标记已读（日记留给以后分析），只安静结束任务
-      task.status = 'done';
-      task.feedback = [...task.feedback, '[归位] AI 未配置，跳过归位（未读日记保留）'];
-      await AgentTaskStore.update(task);
+      await AgentBrain.finalizeTask(task, 'AI 未配置，跳过归位（未读日记保留）');
       return;
     }
 
@@ -424,7 +427,7 @@ $buf''';
     final pendingTasks = await _pendingTaskText();
     final profile = await MemoryService.getProfile();
 
-    // 2. 组装提示词（角色卡保证是温晚照本人在复盘）
+    // 2. 组装提示词（角色卡保证是智能体本人在复盘）
     final base = await AiPromptManager().loadPrompt('nightly_review.txt');
     final persona = await AiPromptManager().loadPersona();
     final system = [
@@ -491,9 +494,18 @@ $buf''';
       await _storeNightReview(day, review);
       fb.write('，留下当晚复盘');
     }
-    task.status = 'done';
-    task.feedback = [...task.feedback, fb.toString()];
-    await AgentTaskStore.update(task);
+    await AgentBrain.finalizeTask(task, fb.toString());
+  }
+
+  /// 行为建模：重算近 N 天观察的分钟窗口聚合 → AI 生成一句话行为画像 → 落库。
+  ///
+  /// 由 BrainService 每日 23:30 种子创建（确定性例行），也可被大脑自主规划
+  /// 或分析页「重新建模」按钮手动触发。AI 未配置/失败时 BehaviorModelStore.build
+  /// 内部降级（保留旧模型），任务仍置 done 不再重试；「完成任务」观察由
+  /// execute() 通用收尾自动记录（title 即活动名）。
+  static Future<void> _execBuildBehaviorModel(AgentTask task) async {
+    final summary = await BehaviorModelStore.build();
+    await AgentBrain.finalizeTask(task, summary);
   }
 
   /// 把当晚复盘存为「待读」，用户下次打开助手页时注入。

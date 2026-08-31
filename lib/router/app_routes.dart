@@ -78,7 +78,4 @@ abstract class AppRoutes {
 
   //智能体全屏阻断页（强制锁屏，App 内）
   static const blockScreenPage = '/blockScreen';
-
-  //行为作息页（用户自定义 24h 作息表 + 手机监督）
-  static const routinePage = '/routine';
 }

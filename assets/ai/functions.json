@@ -49,14 +49,6 @@
     "result": "对应主题的详细价值观准则文本"
   },
   {
-    "name": "get_lore",
-    "description": "查询自己的记忆档案（不寐市、梦境修补师的工作、老莫、夏迟等设定）。只有当你记不清关于自己的细节、需要确认时才调用；日常聊天不需要。相当于翻自己的笔记本",
-    "params": [
-      {"name": "topic", "type": "string", "required": true, "description": "要查的主题，例如：身份、城市、职业、修补原则、事务所、成长、父亲、师父、夏迟"}
-    ],
-    "result": "档案中对应主题的内容"
-  },
-  {
     "name": "env_snapshot",
     "description": "获取用户当前所在城市和实时天气（IP 定位，无需用户授权）。返回省份、城市、区县、天气、温度、体感、风向",
     "params": [],
@@ -79,5 +71,24 @@
       {"name": "endHour", "type": "string", "required": false, "description": "结束小时(0-23)，过滤该时段之前"}
     ],
     "result": "[{start, end, app, durationMs}]  start/end 为 HH:MM，end 为 null 表示仍在进行"
+  },
+  {
+    "name": "get_behavior_summary",
+    "description": "获取智能体对用户24小时行为作息规律的归纳（近N天手机观察的分时段聚合 + 一句话行为画像）。当用户问「我每天什么时间段在做什么/作息规律」或需要基于行为数据判断时调用",
+    "params": [
+      {"name": "days", "type": "string", "required": false, "description": "统计最近几天，默认7"},
+      {"name": "windowMinutes", "type": "string", "required": false, "description": "分钟窗口大小，默认120（2小时一桶，12桶覆盖24小时）"}
+    ],
+    "result": "近N天各时间段常做行为文本 + 智能体归纳的一句话行为画像"
+  },
+  {
+    "name": "set_user_location",
+    "description": "修正用户当前所在地（写入地点覆盖，之后的地点判断以它为准）。当用户在对话中明确说出所在地（如「我在北京海淀」「家在杭州」），且与当前记录不一致、或你认为 IP 定位不准（如把海淀识别成西城）时调用。province/city/district 三个参数都允许只给一部分，缺省的维度保持原样",
+    "params": [
+      {"name": "province", "type": "string", "required": false, "description": "省份，如 北京市"},
+      {"name": "city", "type": "string", "required": false, "description": "城市，如 北京市"},
+      {"name": "district", "type": "string", "required": false, "description": "区县，如 海淀区"}
+    ],
+    "result": "已修正的用户所在地"
   }
 ]

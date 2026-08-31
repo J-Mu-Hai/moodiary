@@ -34,6 +34,7 @@ import 'package:moodiary/services/task_doc_parser.dart';
 import 'package:moodiary/services/task_guide_service.dart';
 import 'package:moodiary/src/rust/api/kmp.dart';
 import 'package:moodiary/utils/file_util.dart';
+import 'package:moodiary/utils/log_util.dart';
 import 'package:moodiary/utils/markdown_util.dart';
 import 'package:moodiary/utils/media_util.dart';
 import 'package:moodiary/utils/notice_util.dart';
@@ -245,16 +246,20 @@ class EditLogic extends GetxController {
   }
 
   /// 进入任务规划模式
+  ///
+  /// ── 已静默（2026-08-19）：「任务管理」分类新建时强制 markdown + 预填 YAML ──
+  /// 用户要求该分类下三种格式（text / richText / markdown）都能正常使用，不再
+  /// 限定只能 markdown。仍保留 isTaskPlanning 标记：选 markdown 时引导标签栏 /
+  /// AI 分栏 / 任务渲染视图照常工作；选 text/richText 走普通编辑器
+  /// （initGuide 因 markdown 控制器为空自动跳过，不会崩）。
+  /// 如需恢复「新建强制 markdown」，在 isNew 分支加回：
+  ///   state.type = DiaryType.markdown;
+  ///   markdownTextEditingController =
+  ///       TextEditingController(text: TaskDocParser.buildNewDocTemplate());
+  ///   state.renderMarkdown.value = true;
   void _enterTaskPlanningMode() {
     state.isTaskPlanning.value = true;
-    if (state.isNew) {
-      // 新建：强制 markdown + 预填 YAML 模板
-      state.type = DiaryType.markdown;
-      markdownTextEditingController = TextEditingController(
-        text: TaskDocParser.buildNewDocTemplate(),
-      );
-      state.renderMarkdown.value = true;
-    } else if (state.type == DiaryType.markdown) {
+    if (!state.isNew && state.type == DiaryType.markdown) {
       // 已有 markdown：渲染为主
       state.renderMarkdown.value = true;
     }
@@ -1015,14 +1020,21 @@ class EditLogic extends GetxController {
       oldDiary: state.originalDiary,
       newDiary: state.currentDiary,
     );
-    // 通知智能体：日记刚写完立即入脑（diary_written 信号，带标题+内容片段）
+    // 通知智能体：日记刚写完立即入脑（diary_written 信号，带标题+内容片段）。
+    // 后台链路上的 AI/网络异常一律在日志留档、绝不冒成未捕获弹窗
+    // （此前出现过「保存日记后 404 程序异常弹窗」：provider 请求失败的
+    // URL 已由 provider 层记进日志，这里只是兜底保证不打扰用户）。
     final _plainText = state.currentDiary.contentText.trim();
-    unawaited(BrainService().notifyDiaryWritten(
-      title: state.currentDiary.title,
-      snippet: _plainText.length > 80
-          ? _plainText.substring(0, 80)
-          : _plainText,
-    ));
+    unawaited(BrainService()
+        .notifyDiaryWritten(
+          title: state.currentDiary.title,
+          snippet: _plainText.length > 80
+              ? _plainText.substring(0, 80)
+              : _plainText,
+        )
+        .catchError((Object e) {
+          LogUtil.logToFile('[Brain] notifyDiaryWritten 失败（已兜底忽略）: $e');
+        }));
     state.isNew
         ? Get.back(result: state.currentDiary.categoryId ?? '')
         : Get.back(result: 'changed');
@@ -1117,30 +1129,37 @@ class EditLogic extends GetxController {
 
     state.isProcessing = true;
     update(['Weather']);
+    try {
+      // 获取定位
+      final position = await Api.updatePosition();
+      if (position == null) {
+        _handleError(l10n.locationError);
+        return;
+      }
 
-    // 获取定位
-    final position = await Api.updatePosition();
-    if (position == null) {
-      _handleError(l10n.locationError);
-      return;
-    }
+      state.currentDiary.position = position;
 
-    state.currentDiary.position = position;
+      // 获取天气
+      final weather = await Api.updateWeather(
+        position: LatLng(double.parse(position[0]), double.parse(position[1])),
+      );
 
-    // 获取天气
-    final weather = await Api.updateWeather(
-      position: LatLng(double.parse(position[0]), double.parse(position[1])),
-    );
+      if (weather == null) {
+        _handleError(l10n.weatherError);
+        return;
+      }
 
-    if (weather == null) {
+      state.currentDiary.weather = weather;
+      state.isProcessing = false;
+      NoticeUtil.showToast(l10n.weatherSuccess);
+      update(['Weather']);
+    } catch (e) {
+      // 网络/接口失败兜底（qweather geo/weather 曾返回 404/403，且定位/网络
+      // 随时可能抛 PlatformException）：只提示一次，不再冒泡成未捕获异步异常
+      // 触发全局 Error 弹窗——本方法经 unawaited 调用，漏兜底必弹窗。
+      LogUtil.logToFile('[Weather] 获取定位/天气失败（已兜底）: $e');
       _handleError(l10n.weatherError);
-      return;
     }
-
-    state.currentDiary.weather = weather;
-    state.isProcessing = false;
-    NoticeUtil.showToast(l10n.weatherSuccess);
-    update(['Weather']);
   }
 
   void _handleError(String message) {

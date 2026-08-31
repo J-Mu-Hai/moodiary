@@ -230,6 +230,14 @@ class BrainMonitor {
   /// 明天计划），实验室「今日基础任务」据此统一展示。
   Future<void> _firePlanAsk(String period, String question) async {
     try {
+      // 同一时段的计划询问已存在（pending/waitingUser，如注入失败重试中）
+      // → 不重复创建，避免同一天问同一件事两次
+      final existing = await AgentTaskStore.load();
+      final dup = existing.any((t) =>
+          t.params['planPeriod']?.toString() == period &&
+          (t.status == 'pending' || t.status == 'waitingUser'));
+      if (dup) return;
+
       final task = AgentTask(
         title: '询问${DailyRhythmStore.labelOf(period)}计划',
         kind: 'immediate',

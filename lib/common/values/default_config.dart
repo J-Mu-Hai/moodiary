@@ -34,6 +34,11 @@ class DefaultConfig {
   // 和风天气 key（实时天气 + 城市查询），也会预填进 PrefUtil 供现有天气模块复用
   static const String qweatherKey =
       String.fromEnvironment('MOODIARY_QWEATHER_KEY');
+  // 和风天气专属 API Host（2026 起旧公共域名 devapi/api/geoapi.qweather.com
+  // 逐步停用，key 绑定个人专属域名，如 abc123.def.qweatherapi.com）。
+  // 未注入/为空时调用方回落到旧公共域名（兼容老配置）。
+  static const String qweatherHost =
+      String.fromEnvironment('MOODIARY_QWEATHER_HOST');
   // 腾讯位置服务 IP 定位 key（城市级定位，零权限）
   static const String tencentIpKey =
       String.fromEnvironment('MOODIARY_TENCENT_IP_KEY');
@@ -127,11 +132,24 @@ class DefaultConfig {
           '${list.map((c) => '${c.id}:${_maskKey(c.apiKey)}').join(' | ')}');
     }
 
-    // 3. 和风天气 key：未配置且构建时注入了才预填（环境感知/侧边栏天气复用）
+    // 3. 和风天气 key：未配置且构建时注入了才预填；已配置但被构建注入的新 key
+    //    顶替（.env.local 轮换）→ 同步更新，否则旧 key 一直留着、新 key 失效
+    //    后所有天气调用 403/401（与 AI provider 同款同步策略）。
     final existingQweatherKey = PrefUtil.getValue<String>('qweatherKey');
-    if ((existingQweatherKey == null || existingQweatherKey.isEmpty) &&
-        qweatherKey.isNotEmpty) {
-      await PrefUtil.setValue<String>('qweatherKey', qweatherKey);
+    if (qweatherKey.isNotEmpty) {
+      if (existingQweatherKey == null || existingQweatherKey.isEmpty) {
+        await PrefUtil.setValue<String>('qweatherKey', qweatherKey);
+      } else if (existingQweatherKey != qweatherKey) {
+        await PrefUtil.setValue<String>('qweatherKey', qweatherKey);
+        print('[DefaultConfig] 和风天气 key 已同步为构建注入的新 key');
+      }
+    }
+
+    // 3b. 和风专属 API Host：未配置且构建时注入了才预填（环境感知/天气/定位复用）
+    final existingQweatherHost = PrefUtil.getValue<String>('qweatherHost');
+    if ((existingQweatherHost == null || existingQweatherHost.isEmpty) &&
+        qweatherHost.isNotEmpty) {
+      await PrefUtil.setValue<String>('qweatherHost', qweatherHost);
     }
 
     // 4. 天地图 key：未配置且构建时注入了才预填

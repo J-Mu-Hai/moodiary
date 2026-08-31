@@ -9,6 +9,8 @@ import 'package:moodiary/main.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/agent_brain/agent_task.dart';
 import 'package:moodiary/services/agent_brain/daily_rhythm.dart';
+import 'package:moodiary/services/api_health.dart';
+import 'package:moodiary/utils/environment_sensor.dart';
 import 'package:moodiary/utils/notice_util.dart';
 import 'package:moodiary/utils/webdav_util.dart';
 import 'package:refreshed/refreshed.dart';
@@ -157,6 +159,32 @@ class LaboratoryPage extends StatelessWidget {
                   icon: const FaIcon(FontAwesomeIcons.wrench)),
             ),
             ListTile(
+              title: const Text('和风 API Host'),
+              subtitle: SelectionArea(
+                  child: Text(PrefUtil.getValue<String>('qweatherHost') ?? '未设置（使用旧公共域名，2026 年起已失效）')),
+              trailing: IconButton(
+                  onPressed: () async {
+                    final res = await showTextInputDialog(
+                        context: context,
+                        style: AdaptiveStyle.material,
+                        title: '和风 API Host',
+                        message:
+                            '2026 起和风旧公共域名停用，请在控制台「设置」页复制你的专属 API Host\n'
+                            '（形如 abc123.def.qweatherapi.com，可带或不带 https://）',
+                        textFields: [
+                          DialogTextField(
+                            hintText: '如 abc123.def.qweatherapi.com',
+                            initialText:
+                                PrefUtil.getValue<String>('qweatherHost') ?? '',
+                          )
+                        ]);
+                    if (res != null) {
+                      logic.setQweatherHost(host: res[0]);
+                    }
+                  },
+                  icon: const FaIcon(FontAwesomeIcons.wrench)),
+            ),
+            ListTile(
               title: const Text('天地图密钥'),
               subtitle: SelectionArea(
                   child: Text(PrefUtil.getValue<String>('tiandituKey') ?? '')),
@@ -225,6 +253,8 @@ class LaboratoryPage extends StatelessWidget {
               title: const Text('立即沉淀画像'),
               subtitle: const Text('手动执行一次记忆层沉淀：把今天日记的认知写进用户画像'),
             ),
+            // API 连通性检查 + 当前位置/天气（可折叠）
+            const _ApiCheckSection(),
             // 智能体大脑：信号触发 / 任务库 / 用户规则
             const _BrainSection(),
           ],
@@ -232,6 +262,345 @@ class LaboratoryPage extends StatelessWidget {
       }),
     );
   }
+}
+
+/// API 连通性检查区块：顶部卡片展示当前地点与天气，下方逐项检查各服务商连通性。
+///
+/// 每项可独立「检查/重查」；「全部检查」并发跑所有项。检查走真实请求
+/// （含鉴权），结果统一收敛成 [ApiHealthResult]，失败只标红不弹窗。
+class _ApiCheckSection extends StatefulWidget {
+  const _ApiCheckSection();
+
+  @override
+  State<_ApiCheckSection> createState() => _ApiCheckSectionState();
+}
+
+class _ApiCheckSectionState extends State<_ApiCheckSection> {
+  late List<_ApiItem> _items;
+
+  bool _expanded = false; // 默认折叠，节省实验室空间
+  bool _locLoading = true;
+  Map<String, dynamic>? _snapshot; // 位置/天气快照
+  bool _checkingAll = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _items = _buildItems();
+    _loadSnapshot();
+  }
+
+  /// 从当前配置构建检查项（AI 服务商逐个 + 其余固定服务）。
+  /// AI 项复用 ApiHealthService.configuredAiProviders()：测的是助手实际在用的
+  /// 当前 provider（排最前），其余已配置 provider 依次排后，跳过未配置/重复项。
+  List<_ApiItem> _buildItems() {
+    final items = <_ApiItem>[];
+    final providers = ApiHealthService.configuredAiProviders();
+    if (providers.isEmpty) {
+      items.add(_ApiItem(
+        'AI 服务商',
+        () async => ApiHealthResult(
+            name: 'AI 服务商',
+            ok: false,
+            latencyMs: 0,
+            detail: '未配置任何服务商（上方添加）'),
+      ));
+    } else {
+      for (final cfg in providers) {
+        items.add(_ApiItem(cfg.displayName,
+            () => ApiHealthService.checkAiProvider(cfg)));
+      }
+    }
+    items
+      ..add(_ApiItem('和风天气', ApiHealthService.checkQweather))
+      ..add(_ApiItem('天地图', ApiHealthService.checkTianditu))
+      ..add(_ApiItem('腾讯位置服务', ApiHealthService.checkTencentIp))
+      ..add(_ApiItem('豆包语音合成', ApiHealthService.checkDoubaoTts))
+      ..add(_ApiItem('WebDAV 同步', ApiHealthService.checkWebDav));
+    return items;
+  }
+
+  /// 加载当前位置 + 天气（环境感知：IP 定位→城市→和风天气，全程静默）。
+  Future<void> _loadSnapshot() async {
+    setState(() {
+      _locLoading = true;
+      _snapshot = null;
+    });
+    final snap = await EnvironmentSensor.getSnapshot()
+        .timeout(const Duration(seconds: 15), onTimeout: () => null);
+    if (!mounted) return;
+    setState(() {
+      _snapshot = snap;
+      _locLoading = false;
+    });
+  }
+
+  /// 检查单项。
+  Future<void> _checkItem(_ApiItem item) async {
+    if (item.checking) return;
+    setState(() {
+      item.checking = true;
+      item.result = null;
+    });
+    final r = await item.check();
+    if (!mounted) return;
+    setState(() {
+      item.result = r;
+      item.checking = false;
+    });
+  }
+
+  /// 全部并发检查。
+  Future<void> _checkAll() async {
+    if (_checkingAll || _items.any((i) => i.checking)) return;
+    setState(() {
+      _checkingAll = true;
+      for (final i in _items) {
+        i.checking = true;
+        i.result = null;
+      }
+    });
+    final list = await Future.wait(_items.map((i) => i.check()));
+    if (!mounted) return;
+    setState(() {
+      for (var idx = 0; idx < _items.length; idx++) {
+        _items[idx].result = list[idx];
+        _items[idx].checking = false;
+      }
+      _checkingAll = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textStyle = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(),
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Row(
+              children: [
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 18,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.wifi_tethering_outlined, size: 18),
+                const SizedBox(width: 8),
+                Text('API 连通性检查', style: textStyle.titleMedium),
+                const Spacer(),
+                if (_expanded)
+                  TextButton.icon(
+                    onPressed: _checkingAll ? null : _checkAll,
+                    icon: _checkingAll
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.play_arrow, size: 18),
+                    label: Text(_checkingAll ? '检查中…' : '全部检查'),
+                  ),
+                if (_expanded)
+                  IconButton(
+                    onPressed: () {
+                      setState(() => _items = _buildItems());
+                      _loadSnapshot();
+                    },
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    tooltip: '刷新',
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (_expanded) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text(
+              '逐项检查各服务商连通性（真实请求含鉴权）；顶部为当前所在位置与天气',
+              style: textStyle.bodySmall
+                  ?.copyWith(color: colorScheme.onSurfaceVariant),
+            ),
+          ),
+          _buildLocationCard(colorScheme, textStyle),
+          ..._items.map((item) => _buildItemRow(item, colorScheme, textStyle)),
+        ],
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  /// 位置 + 天气卡片。
+  Widget _buildLocationCard(ColorScheme colorScheme, TextTheme textStyle) {
+    return Card(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: _locLoading
+            ? Row(
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 12),
+                  Text('正在获取位置与天气…',
+                      style: textStyle.bodySmall
+                          ?.copyWith(color: colorScheme.onSurfaceVariant)),
+                ],
+              )
+            : _snapshot == null
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.location_off_outlined,
+                              size: 16, color: colorScheme.error),
+                          const SizedBox(width: 6),
+                          Text('位置/天气获取失败',
+                              style: textStyle.bodyMedium
+                                  ?.copyWith(color: colorScheme.error)),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '检查下方「和风天气」「腾讯位置服务」连通性：key 失效或网络异常都会导致这里拿不到数据',
+                        style: textStyle.bodySmall
+                            ?.copyWith(color: colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  )
+                : _buildLocationContent(_snapshot!, colorScheme, textStyle),
+      ),
+    );
+  }
+
+  Widget _buildLocationContent(
+      Map<String, dynamic> snap, ColorScheme colorScheme, TextTheme textStyle) {
+    final city = _fmtCity(snap);
+    final lat = snap['lat']?.toString() ?? '';
+    final lng = snap['lng']?.toString() ?? '';
+    final weather = snap['weather']?.toString() ?? '';
+    final temp = snap['temp']?.toString() ?? '';
+    final feelsLike = snap['feelsLike']?.toString() ?? '';
+    final windDir = snap['windDir']?.toString() ?? '';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.place_outlined, size: 16, color: colorScheme.primary),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                '当前地点：$city',
+                style: textStyle.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (lat.isNotEmpty)
+              Text('($lng, $lat)',
+                  style: textStyle.labelSmall
+                      ?.copyWith(color: colorScheme.onSurfaceVariant)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Icon(
+              weather.isNotEmpty ? Icons.wb_sunny_outlined : Icons.wb_cloudy_outlined,
+              size: 16,
+              color: colorScheme.tertiary,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                weather.isEmpty
+                    ? '天气未获取到（和风天气 key 可能失效）'
+                    : '天气：$weather${temp.isNotEmpty ? ' $temp℃' : ''}'
+                        '${feelsLike.isNotEmpty ? ' · 体感 $feelsLike℃' : ''}'
+                        '${windDir.isNotEmpty ? ' · $windDir' : ''}',
+                style: textStyle.bodySmall,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  String _fmtCity(Map<String, dynamic> snap) {
+    final p = snap['province']?.toString() ?? '';
+    final c = snap['city']?.toString() ?? '';
+    final d = snap['district']?.toString() ?? '';
+    return '$p${(c.isNotEmpty && !p.contains(c) ? c : '')}$d';
+  }
+
+  Widget _buildItemRow(
+      _ApiItem item, ColorScheme colorScheme, TextTheme textStyle) {
+    final r = item.result;
+    final Widget leading;
+    final Color leadingColor;
+    if (item.checking) {
+      leading = const SizedBox(
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+      leadingColor = colorScheme.primary;
+    } else if (r == null) {
+      leading = Icon(Icons.radio_button_unchecked, size: 18, color: colorScheme.outline);
+      leadingColor = colorScheme.outline;
+    } else if (r.ok) {
+      leading = Icon(Icons.check_circle, size: 18, color: Colors.green.shade600);
+      leadingColor = Colors.green.shade600;
+    } else {
+      leading = Icon(Icons.error_outline, size: 18, color: colorScheme.error);
+      leadingColor = colorScheme.error;
+    }
+
+    return ListTile(
+      dense: true,
+      leading: leading,
+      title: Text(item.name,
+          style: textStyle.bodyMedium?.copyWith(
+              color: r != null && !r.ok
+                  ? colorScheme.error
+                  : (r != null && r.ok
+                      ? Colors.green.shade600
+                      : colorScheme.onSurface),
+              fontWeight: FontWeight.w600)),
+      subtitle: Text(
+        r == null
+            ? '未检查'
+            : '${r.detail} · ${r.latencyMs}ms',
+        style: textStyle.bodySmall?.copyWith(color: leadingColor),
+      ),
+      trailing: TextButton(
+        onPressed: item.checking ? null : () => _checkItem(item),
+        child: Text(item.checking ? '…' : (r == null ? '检查' : '重查')),
+      ),
+    );
+  }
+}
+
+/// 一个可独立检查的 API 项。
+class _ApiItem {
+  _ApiItem(this.name, this.check);
+
+  final String name;
+  final Future<ApiHealthResult> Function() check;
+  ApiHealthResult? result;
+  bool checking = false;
 }
 
 /// 智能体大脑演示区块：手动触发信号、可视化任务库、添加用户规则。
@@ -246,6 +615,7 @@ class _BrainSection extends StatefulWidget {
 
 class _BrainSectionState extends State<_BrainSection> {
   final logic = Bind.find<LaboratoryLogic>();
+  final _signalController = TextEditingController();
   List<AgentTask> _tasks = [];
   List<AgentTask> _basicTasks = [];
   List<String> _rules = [];
@@ -257,6 +627,12 @@ class _BrainSectionState extends State<_BrainSection> {
   void initState() {
     super.initState();
     _refresh();
+  }
+
+  @override
+  void dispose() {
+    _signalController.dispose();
+    super.dispose();
   }
 
   Future<void> _refresh() async {
@@ -307,8 +683,14 @@ class _BrainSectionState extends State<_BrainSection> {
     );
   }
 
-  Future<void> _trigger(String type) async {
-    final result = await logic.triggerBrainSignal(type);
+  Future<void> _triggerCustom() async {
+    final text = _signalController.text.trim();
+    if (text.isEmpty) {
+      NoticeUtil.showToast('先输入一个情况描述');
+      return;
+    }
+    _signalController.clear();
+    final result = await logic.triggerCustomSignal(text);
     await _refresh();
     await _showResult('大脑决策结果', result);
   }
@@ -630,87 +1012,47 @@ class _BrainSectionState extends State<_BrainSection> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
           child: Text(
-            '手动触发信号（绕过冷却，观察大脑如何规划）',
+            '直接输入一个情况，送入大脑观察它如何决策（绕过冷却）',
             style: textStyle.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
           ),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          child: Row(
             children: [
-              ActionChip(
-                avatar: const Icon(Icons.cloud_outlined, size: 16),
-                label: const Text('模拟天气变化'),
-                onPressed: () => _trigger('weather_changed'),
+              Expanded(
+                child: TextField(
+                  controller: _signalController,
+                  decoration: const InputDecoration(
+                    hintText: '如：我刚写完一篇日记，说今天天气很好心情不错',
+                    isDense: true,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(12))),
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _triggerCustom(),
+                ),
               ),
-              ActionChip(
-                avatar: const Icon(Icons.edit_note, size: 16),
-                label: const Text('模拟日记稳定'),
-                onPressed: () => _trigger('diary_stable'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.smartphone, size: 16),
-                label: const Text('模拟类别变化'),
-                onPressed: () => _trigger('usage_category_changed'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.psychology, size: 16),
-                label: const Text('模拟画像未初始化'),
-                onPressed: () => _trigger('profile_uninitialized'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.badge_outlined, size: 16),
-                label: const Text('模拟缺基础认知'),
-                onPressed: () => _trigger('profile_incomplete'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.hourglass_bottom, size: 16),
-                label: const Text('模拟长期计划回访'),
-                onPressed: () => _trigger('longterm_overdue'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.task_alt, size: 16),
-                label: const Text('模拟任务停滞'),
-                onPressed: () => _trigger('task_stall'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.article_outlined, size: 16),
-                label: const Text('模拟日记写入'),
-                onPressed: () => _trigger('diary_written'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.switch_access_shortcut, size: 16),
-                label: const Text('模拟切换App'),
-                onPressed: () => _trigger('app_switched'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.wb_sunny_outlined, size: 16),
-                label: const Text('模拟早晨问候'),
-                onPressed: () => _trigger('morning_check_in'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.wb_twilight, size: 16),
-                label: const Text('模拟中午询问'),
-                onPressed: () => _trigger('noon_check_in'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.nights_stay_outlined, size: 16),
-                label: const Text('模拟傍晚询问'),
-                onPressed: () => _trigger('evening_check_in'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.event_available_outlined, size: 16),
-                label: const Text('模拟明天计划'),
-                onPressed: () => _trigger('tomorrow_check_in'),
-              ),
-              ActionChip(
-                avatar: const Icon(Icons.nightlight_round, size: 16),
-                label: const Text('立即归位'),
-                onPressed: _runNightly,
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: _triggerCustom,
+                icon: const Icon(Icons.send, size: 16),
+                label: const Text('送入大脑'),
               ),
             ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: ActionChip(
+              avatar: const Icon(Icons.nightlight_round, size: 16),
+              label: const Text('立即归位（直接跑复盘执行器）'),
+              onPressed: _runNightly,
+            ),
           ),
         ),
         // 大脑输入/输出监督：展示送进大脑的上下文与模型原始返回
@@ -769,118 +1111,157 @@ class _BrainSectionState extends State<_BrainSection> {
               ),
             ),
           ),
-        // 智能体输入/输出记录（按日期分组，开发阶段观察「每天有什么输入/输出」）
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text('智能体输入/输出记录（按日期）', style: textStyle.titleSmall),
+        // 智能体输入/输出记录（按日期分组，默认折叠节省空间）
+        ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          shape: const Border(),
+          collapsedShape: const Border(),
+          leading: Icon(Icons.history, size: 18, color: colorScheme.primary),
+          title: Text('智能体输入/输出记录（按日期）', style: textStyle.titleSmall),
+          subtitle: Text(
+            _decisionLog.isEmpty ? '暂无记录' : '共 ${_decisionLog.length} 条 · 最近 3 天',
+            style: textStyle.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+          ),
+          children: [
+            if (_decisionLog.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Text(
+                    '暂无记录：大脑每做一次决策、或处理一次用户反馈，都会按日期归档到这里',
+                    style: TextStyle(fontSize: 12)),
+              )
+            else
+              ..._buildDateGroups(colorScheme, textStyle),
+          ],
         ),
-        if (_decisionLog.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-                '暂无记录：大脑每做一次决策、或处理一次用户反馈，都会按日期归档到这里',
-                style: TextStyle(fontSize: 12)),
-          )
-        else
-          ..._buildDateGroups(colorScheme, textStyle),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text('任务库（进行中）', style: textStyle.titleSmall),
-        ),
-        if (_loading)
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (_tasks.isEmpty)
-          const ListTile(
-            dense: true,
-            title: Text('暂无进行中的任务'),
-            subtitle: Text('触发信号或添加规则后，大脑会把规划写到这里'),
-          )
-        else
-          ..._tasks.map((t) => ListTile(
+        ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          shape: const Border(),
+          collapsedShape: const Border(),
+          leading: Icon(Icons.task_alt, size: 18, color: colorScheme.primary),
+          title: Text('任务库', style: textStyle.titleSmall),
+          subtitle: Text(
+            '进行中 ${_tasks.length} · 今日基础任务 ${_basicTasks.length}',
+            style: textStyle.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('进行中',
+                    style: textStyle.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_tasks.isEmpty)
+              const ListTile(
                 dense: true,
-                onTap: () => _showTaskDetail(t),
-                leading: Icon(
-                  t.action == 'block_screen'
-                      ? Icons.lock_clock
-                      : t.action == 'tts'
-                          ? Icons.volume_up_outlined
-                          : Icons.task_alt,
-                  size: 20,
-                  color: colorScheme.primary,
-                ),
-                title: Text(t.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                subtitle: Text(
-                  '${_kindLabel(t.kind)} · ${t.action} · ${t.status}'
-                  '${t.scheduledAt != null ? ' @${_fmtHm(t.scheduledAt!)}' : ''}',
-                  style: textStyle.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant),
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      onPressed: () => _exec(t),
-                      icon: const Icon(Icons.play_arrow, size: 20),
-                      tooltip: '立即执行',
+                title: Text('暂无进行中的任务'),
+                subtitle: Text('文字送入大脑或添加规则后，规划会写到这里'),
+              )
+            else
+              ..._tasks.map((t) => ListTile(
+                    dense: true,
+                    onTap: () => _showTaskDetail(t),
+                    leading: Icon(
+                      t.action == 'block_screen'
+                          ? Icons.lock_clock
+                          : t.action == 'tts'
+                              ? Icons.volume_up_outlined
+                              : Icons.task_alt,
+                      size: 20,
+                      color: colorScheme.primary,
                     ),
-                    IconButton(
-                      onPressed: () => _cancel(t),
-                      icon: Icon(Icons.close, size: 20, color: colorScheme.error),
-                      tooltip: '取消',
+                    title: Text(t.title,
+                        maxLines: 2, overflow: TextOverflow.ellipsis),
+                    subtitle: Text(
+                      '${_kindLabel(t.kind)} · ${t.action} · ${t.status}'
+                      '${t.scheduledAt != null ? ' @${_fmtHm(t.scheduledAt!)}' : ''}',
+                      style: textStyle.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant),
                     ),
-                  ],
-                ),
-              )),
-        // 今日基础任务：统一作息询问（上午/中午/晚上/明天）与复盘等确定性
-        // 日常例行，任意状态统一可见——「所有基础任务都在任务规划中」。
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text('今日基础任务（统一作息/复盘）', style: textStyle.titleSmall),
-        ),
-        if (_basicTasks.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-                '今日还没有基础任务：询问上午/中午/晚上/明天计划与 23:00 复盘会'
-                '在对应时间点自动创建到这里',
-                style: TextStyle(fontSize: 12)),
-          )
-        else
-          ..._basicTasks.map((t) {
-            final period = t.params['planPeriod']?.toString();
-            final label =
-                period != null && DailyRhythmStore.periodLabels.containsKey(period)
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          onPressed: () => _exec(t),
+                          icon: const Icon(Icons.play_arrow, size: 20),
+                          tooltip: '立即执行',
+                        ),
+                        IconButton(
+                          onPressed: () => _cancel(t),
+                          icon: Icon(Icons.close,
+                              size: 20, color: colorScheme.error),
+                          tooltip: '取消',
+                        ),
+                      ],
+                    ),
+                  )),
+            // 今日基础任务：统一作息询问（上午/中午/晚上/明天）与复盘等确定性
+            // 日常例行，任意状态统一可见——「所有基础任务都在任务规划中」。
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('今日基础任务（统一作息/复盘）',
+                    style: textStyle.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ),
+            if (_basicTasks.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                    '今日还没有基础任务：询问上午/中午/晚上/明天计划与 23:00 复盘会'
+                    '在对应时间点自动创建到这里',
+                    style: TextStyle(fontSize: 12)),
+              )
+            else
+              ..._basicTasks.map((t) {
+                final period = t.params['planPeriod']?.toString();
+                final label = period != null &&
+                        DailyRhythmStore.periodLabels.containsKey(period)
                     ? DailyRhythmStore.periodLabels[period]!
                     : '';
-            return ListTile(
-              dense: true,
-              onTap: () => _showTaskDetail(t),
-              leading: Icon(
-                t.status == 'waitingUser'
-                    ? Icons.mark_chat_unread_outlined
-                    : t.status == 'done'
-                        ? Icons.check_circle_outline
-                        : Icons.event_available_outlined,
-                size: 20,
-                color: t.status == 'done'
-                    ? colorScheme.outline
-                    : t.status == 'waitingUser'
-                        ? colorScheme.primary
-                        : colorScheme.tertiary,
-              ),
-              title: Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text(
-                '${label.isNotEmpty ? '$label · ' : ''}${_statusLabel(t.status)}'
-                ' · ${_fmtHm(t.createdAt)}'
-                '${t.scheduledAt != null ? ' @${_fmtHm(t.scheduledAt!)}' : ''}',
-                style: textStyle.bodySmall
-                    ?.copyWith(color: colorScheme.onSurfaceVariant),
-              ),
-            );
-          }),
+                return ListTile(
+                  dense: true,
+                  onTap: () => _showTaskDetail(t),
+                  leading: Icon(
+                    t.status == 'waitingUser'
+                        ? Icons.mark_chat_unread_outlined
+                        : t.status == 'done'
+                            ? Icons.check_circle_outline
+                            : Icons.event_available_outlined,
+                    size: 20,
+                    color: t.status == 'done'
+                        ? colorScheme.outline
+                        : t.status == 'waitingUser'
+                            ? colorScheme.primary
+                            : colorScheme.tertiary,
+                  ),
+                  title: Text(t.title,
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                  subtitle: Text(
+                    '${label.isNotEmpty ? '$label · ' : ''}${_statusLabel(t.status)}'
+                    ' · ${_fmtHm(t.createdAt)}'
+                    '${t.scheduledAt != null ? ' @${_fmtHm(t.scheduledAt!)}' : ''}',
+                    style: textStyle.bodySmall
+                        ?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
+                );
+              }),
+          ],
+        ),
         // 任务执行记录已按用户要求移除：执行细节可随时在任务详情里看，
         // 实验室面板聚焦「大脑输入/输出」的复盘，不再展示已完成任务列表。
         Padding(
