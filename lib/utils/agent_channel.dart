@@ -120,6 +120,25 @@ class AgentChannel {
     }
   }
 
+  /// 发一条系统通知（智能体后台提醒：App 不在前台时把询问/提醒推给用户）。
+  ///
+  /// 配合引擎保活：后台守护时界面可能不存在，无法跳页注入，改由通知触达；
+  /// 用户点通知打开 App 后，助手页会把对应问题补发到对话里。
+  static Future<void> showAgentNotification({
+    required String title,
+    required String text,
+  }) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('showAgentNotification', {
+        'title': title,
+        'text': text,
+      });
+    } catch (e) {
+      print('[AgentChannel] showAgentNotification 失败: $e');
+    }
+  }
+
   /// 是否正通过蓝牙耳机（A2DP/SCO）输出音频。
   ///
   /// 用于「发起会话」决策：耳机在 → 先语音播报开场白；无耳机 → 直接切对话页

@@ -63,6 +63,25 @@ class UsageMonitorService : Service() {
         return START_STICKY
     }
 
+    /**
+     * 用户从最近任务划掉 App：Android 12+ 会停掉前台服务并杀进程。
+     * 划掉属于「从可见转不可见」的豁免场景，此处尽力重拉服务，保住后台守护；
+     * 即便被系统拒绝，引擎保活（KeepAliveFragment）也会在下次 Activity 重建时接管。
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        try {
+            val restart = Intent(this, UsageMonitorService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(restart)
+            } else {
+                startService(restart)
+            }
+        } catch (e: Exception) {
+            // 系统限制（部分 ROM）时静默，下次打开 App 会重新拉起
+        }
+    }
+
     override fun onDestroy() {
         running = false
         super.onDestroy()
@@ -78,8 +97,8 @@ class UsageMonitorService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("Moodiary 正在监督手机使用")
-            .setContentText("持续统计你在哪些时间段用了哪些应用")
+            .setContentTitle("Moodiary 正在后台守护")
+            .setContentText("持续统计使用时间，并按时提醒你该做的事")
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)

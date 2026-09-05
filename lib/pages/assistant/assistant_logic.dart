@@ -12,6 +12,7 @@ import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/services/ai_functions.dart';
 import 'package:moodiary/services/ai_prompt_manager.dart';
 import 'package:moodiary/services/agent_brain/agent_brain.dart';
+import 'package:moodiary/services/agent_brain/agent_task.dart';
 import 'package:moodiary/services/agent_brain/behavior_model.dart';
 import 'package:moodiary/services/agent_brain/focus_mode.dart';
 import 'package:moodiary/services/memory_service.dart';
@@ -97,6 +98,7 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
     // 否则停留在历史第一条（用户上次说到哪、AI 说到哪都看不见）。
     WidgetsBinding.instance.addPostFrameCallback((_) => toBottom());
     _injectPendingReview();
+    _injectPendingAsks();
     // 聊天页打开期间每 10 秒轻量轮询一次，秒级收到另一端的新消息；
     // 打开瞬间先完整同步一次（推+拉）并刷新消息。
     _startMetaSyncTimer();
@@ -164,6 +166,39 @@ class AssistantLogic extends GetxController with WidgetsBindingObserver {
       _persistChatAndSync();
     } catch (_) {
       // 解析失败：已消费，不弹
+    }
+  }
+
+  /// 补发「后台已发通知、等用户回应」的会话/提问：用户点通知打开助手页后，
+  /// 把 waitingUser 的 ask_user/start_chat 问题以助手气泡呈现，闭环
+  /// 「后台通知 → 点开 → 问题已在对话里」（对应执行器后台降级分支）。
+  ///
+  /// 任务保持 waitingUser 不消费（等用户回复，走 processWaitingUserFeedback
+  /// 正常收尾）；问题已在消息列表（前台路径已注入过）则跳过，避免重复弹。
+  void _injectPendingAsks() {
+    unawaited(_injectPendingAsksAsync());
+  }
+
+  Future<void> _injectPendingAsksAsync() async {
+    final waiting = await AgentTaskStore.query(status: 'waitingUser');
+    var injected = false;
+    for (final task in waiting) {
+      if (task.action != 'ask_user' && task.action != 'start_chat') continue;
+      final question = task.params['question']?.toString() ?? '';
+      final text = task.params['text']?.toString() ?? '';
+      // 与执行器同规则构造气泡内容：ask_user 带问题用「需要你配合」前缀，
+      // start_chat 用 text；空内容跳过。
+      final content = task.action == 'ask_user' && question.isNotEmpty
+          ? '（智能体需要你的配合）$question'
+          : text;
+      if (content.trim().isEmpty) continue;
+      if (state.messages.any((m) => m.content.contains(content))) continue;
+      state.messages.add(AIMessage(role: 'assistant', content: content));
+      injected = true;
+    }
+    if (injected) {
+      update();
+      _persistChatAndSync();
     }
   }
 

@@ -45,16 +45,21 @@ class ScreenTimeService {
   bool get monitoringEnabled =>
       PrefUtil.getValue<bool>('usageMonitorEnabled') ?? false;
 
-  /// 初始化：Android 启动采集；两端都执行一次同步。
+  /// 初始化：Android 启动采集 + 拉起进程保活前台服务。
+  ///
+  /// 前台服务（UsageMonitorService）**无条件**常驻：引擎保活后它让主 isolate
+  /// 的定时器在 App 未打开/退后台时照常运行，实时监控与到点提醒不再依赖
+  /// 「今天先进一次软件」。`monitoringEnabled` 开关只控制分钟级轮询节奏，
+  /// 不再控制前台服务的起停（关掉开关 FGS 依然在，保进程）。
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
     if (Platform.isAndroid) {
       _startTimer();
       _initLifecycle();
-      // 恢复持续监督：上次开着就继续开（启动时应用处于前台，可正常拉起前台服务）
+      await _startForegroundService();
       if (monitoringEnabled) {
-        await _startMonitoring();
+        _startPolling();
       }
     }
     // 不再在启动时立即拉/推一次：全新本地库时 `syncUsageRecords` 会在主
@@ -104,37 +109,40 @@ class ScreenTimeService {
 
   // ========== 持续监督开关 ==========
 
-  /// 打开/关闭持续监督：控制原生前台服务 + 分钟级轮询，并持久化开关。
+  /// 打开/关闭「分钟级轮询」：只控制轮询节奏并持久化开关。
+  ///
+  /// 前台服务（进程保活）由 [init] 无条件拉起后常驻，不再随开关起停；
+  /// 关掉开关只是回到 5 分钟常规采集节奏，进程保活与提醒不受影响。
   Future<void> setMonitoringEnabled(bool enabled) async {
     await PrefUtil.setValue<bool>('usageMonitorEnabled', enabled);
     if (enabled) {
-      await _startMonitoring();
+      _startPolling();
     } else {
-      await _stopMonitoring();
+      _stopPolling();
     }
     // 开关立即拉一次会话，让时间线马上更新
     await _pollSessions();
   }
 
-  Future<void> _startMonitoring() async {
+  /// 拉起原生前台服务保活进程（只应由 [init] 调用；之后常驻，开关不关它）。
+  Future<void> _startForegroundService() async {
     if (!Platform.isAndroid) return;
     try {
       await _channel.invokeMethod<void>('startMonitor');
     } catch (_) {
       // 启动失败（如系统限制）不阻断，靠常规采集兜底
     }
+  }
+
+  void _startPolling() {
     _monitorTimer?.cancel();
     _monitorTimer =
         Timer.periodic(_monitorInterval, (_) => unawaited(_pollSessions()));
   }
 
-  Future<void> _stopMonitoring() async {
+  void _stopPolling() {
     _monitorTimer?.cancel();
     _monitorTimer = null;
-    if (!Platform.isAndroid) return;
-    try {
-      await _channel.invokeMethod<void>('stopMonitor');
-    } catch (_) {}
   }
 
   // ========== 会话采集 ==========

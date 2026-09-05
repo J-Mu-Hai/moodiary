@@ -22,6 +22,8 @@
     <!-- 持续监督前台服务（Android 14+ 强制要求声明类型与权限；specialUse 型，个人自用非 Play 分发） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 开机自启：重启后拉起守护，后台监控/到点提醒不因重启中断 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Android 13+ 显示监督通知所需 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 系统级全屏悬浮窗：智能体「强制锁屏」覆盖所有应用、拦截 Home 手势（阶段4 block_phone 提前实现） -->
@@ -102,6 +104,16 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Continuous usage-statistics monitoring for the user's personal diary agent (minute-level app foreground session collection)" />
         </service>
+
+        <!-- 开机自启：重启后拉起守护（引擎 + 前台服务），智能体后台不中断 -->
+        <receiver
+            android:name=".AgentBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

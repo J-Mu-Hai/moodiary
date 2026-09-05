@@ -10,6 +10,7 @@ import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/router/app_routes.dart';
 import 'package:moodiary/services/ai_prompt_manager.dart';
 import 'package:moodiary/services/ai_provider_manager.dart';
+import 'package:moodiary/services/app_ui_state.dart';
 import 'package:moodiary/services/memory_service.dart';
 import 'package:moodiary/utils/agent_channel.dart';
 import 'package:moodiary/utils/notice_util.dart';
@@ -143,6 +144,22 @@ class AgentExecutor {
       }
     }
 
+    // ── 后台守护降级：界面不可用时无法跳页注入，改发系统通知 ──
+    // 引擎保活后任务可能在 App 被划掉/退后台时触发，此时 Get 导航/toast 依赖
+    // resumed 不可用。发一条头部通知把问题推给用户，任务置 waitingUser；
+    // 用户点通知打开 App 后，助手页会把该问题补发进对话（AssistantLogic._injectPendingAsks）。
+    if (!AppUiState.instance.uiAvailable) {
+      final notifyText = content.replaceFirst('（智能体需要你的配合）', '');
+      await AgentChannel.showAgentNotification(
+        title: task.title,
+        text: notifyText,
+      );
+      task.status = 'waitingUser';
+      task.feedback = [...task.feedback, '[执行] 后台已发通知，等待用户回应'];
+      await AgentTaskStore.update(task);
+      return;
+    }
+
     // ── 让「发起会话」真的抵达用户：语音提醒 → 回前台 → 切对话页 → 注入 ──
 
     // 1. 语音提醒：仅当蓝牙耳机连接时播报开场白（耳机在 = 用户能私密听到，
@@ -218,6 +235,20 @@ class AgentExecutor {
       return;
     }
     final duration = (task.params['durationMinutes'] as num?)?.toInt() ?? 15;
+    // 后台守护降级：界面不可用时无法弹阻断页（悬浮窗/锁屏都依赖 Activity），
+    // 改发通知让用户点开执行；置 waitingUser 防无限重排（6h 看门狗兜底）。
+    if (!AppUiState.instance.uiAvailable) {
+      final reason = task.params['reason']?.toString() ?? '';
+      await AgentChannel.showAgentNotification(
+        title: '专注提醒',
+        text:
+            '智能体想为你开启专注锁屏（$duration 分钟）：${reason.isEmpty ? task.title : reason}。点开 App 执行。',
+      );
+      task.status = 'waitingUser';
+      task.feedback = [...task.feedback, '[执行] 后台已发通知，等待用户点开执行'];
+      await AgentTaskStore.update(task);
+      return;
+    }
     // force 默认 true（强制锁屏：不可提前结束、拦截返回）；false 保留「提前结束」按钮
     final force = task.params['force'] as bool? ?? true;
     // 系统级悬浮窗：有权限则真·全屏锁屏（覆盖所有应用/拦截 Home 手势）；
@@ -262,6 +293,11 @@ class AgentExecutor {
     }
 
     final title = diary.title.isEmpty ? '(无标题)' : diary.title;
+    // 后台守护降级：界面不可用时无法跳转日记页，静默完成（不打扰）。
+    if (!AppUiState.instance.uiAvailable) {
+      await AgentBrain.finalizeTask(task, '后台执行：已定位日记《$title》，未打开页面');
+      return;
+    }
     try {
       await AgentChannel.bringToFront();
       await Future<void>.delayed(const Duration(milliseconds: 300));
