@@ -18,6 +18,8 @@ class PrefUtil {
     'firstStart',
     //自动同步
     'autoSync',
+    // 自动同步默认值已下发标记（default_config 一次性开启用，避免反复强制）
+    'autoSyncSeeded',
     //主题颜色
     'color',
     //主题颜色类型

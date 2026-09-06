@@ -1,0 +1,17 @@
+flutter: [STARTUP] 1ms: RustLib.init
+flutter: [PREF] Instance of 'Stopwatch' SharedPreferencesWithCache.create
+flutter: [PREF] Instance of 'Stopwatch' firstStart
+flutter: [PREF] Instance of 'Stopwatch' getPackageInfo
+flutter: [PREF] Instance of 'Stopwatch' merge
+flutter: [STARTUP] 13ms: PrefUtil.initPref
+[ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception: Invalid argument(s): autoSyncSeeded is not included in the PreferencesFilter allowlist
+#0      SharedPreferencesWithCache.getBool (package:shared_preferences/src/shared_preferences_async.dart:261)
+#1      PrefUtil.getValue (package:moodiary/presentation/pref.dart:317)
+#2      DefaultConfig.seed (package:moodiary/common/values/default_config.dart:76)
+#3      _initSystem (package:moodiary/main.dart:56)
+<asynchronous suspension>
+#4      main (package:moodiary/main.dart:152)
+<asynchronous suspension>
+
+package:media_kit_libs_windows_video registered.
+Problem getting monitor brightness

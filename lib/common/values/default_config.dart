@@ -66,6 +66,20 @@ class DefaultConfig {
       );
     }
 
+    // 1b. WebDAV 已配置但没有给自动同步设过默认 → 一次性开启两项自动同步
+    //     （autoSync：启动时同步 / autoSyncAfterChange：改动后同步）。
+    //     上游默认两者皆关，导致配好 WebDAV 后日记几乎从不自动同步；
+    //     这里对已有设备也只生效一次，之后用户手动关闭不会被再次强制。
+    final hasWebDav =
+        (PrefUtil.getValue<List<String>>('webDavOption') ?? []).isNotEmpty;
+    if (hasWebDav &&
+        !(PrefUtil.getValue<bool>('autoSyncSeeded') ?? false)) {
+      await PrefUtil.setValue<bool>('autoSync', true);
+      await PrefUtil.setValue<bool>('autoSyncAfterChange', true);
+      await PrefUtil.setValue<bool>('autoSyncSeeded', true);
+      print('[DefaultConfig] 已开启默认自动同步（autoSync/autoSyncAfterChange）');
+    }
+
     // 2. AI Provider：无 provider 且注入了 DeepSeek key 才预填；
     //    已有默认 provider 但注入的 key/baseUrl/model 变化（.env.local 轮换）
     //    → 同步更新。否则旧 key 会一直留在手机上，构建注入的新 key 被忽略，

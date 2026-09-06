@@ -186,12 +186,20 @@ class WebDavUtil {
     }
   }
 
+  /// 日记全量同步防重入锁（启动/周期自动同步与手动同步按钮并发时，本次
+  /// 直接跳过交给下一轮，避免两个全量同步同时读写服务器 sync.json 造成
+  /// 读-改-写竞态丢标记）。
+  bool _syncingDiary = false;
+
   Future<void> syncDiary(
     List<Diary> localDiaries, {
     flutter.VoidCallback? onUpload,
     flutter.VoidCallback? onDownload,
     flutter.VoidCallback? onComplete,
   }) async {
+    if (_client == null || _syncingDiary) return;
+    _syncingDiary = true;
+    try {
     final serverSyncData = await fetchServerSyncData();
     final Map<String, String> updatedSyncData = {...serverSyncData};
 
@@ -280,9 +288,15 @@ class WebDavUtil {
       }
     }
 
-    // 更新服务器的同步 JSON 文件
-    await updateServerSyncData(updatedSyncData);
+    // 更新服务器的同步 JSON 文件（无变化时跳过回写，避免每次全量同步
+    // 都白写一次服务器文件——自动同步每 5 分钟跑一次时会反复 PUT 同一内容）
+    if (!flutter.mapEquals(serverSyncData, updatedSyncData)) {
+      await updateServerSyncData(updatedSyncData);
+    }
     onComplete?.call();
+    } finally {
+      _syncingDiary = false;
+    }
   }
 
   /// 读取使用时间记录的同步标记（recordId -> lastModified ISO）
@@ -395,7 +409,9 @@ class WebDavUtil {
       }
 
       print('[SYNC] usage done: downloaded=$downloaded uploaded=$uploaded');
-      await updateUsageSyncData(updatedSyncData);
+      if (!flutter.mapEquals(serverSyncData, updatedSyncData)) {
+        await updateUsageSyncData(updatedSyncData);
+      }
       onComplete?.call();
     } finally {
       _syncingUsage = false;
@@ -681,8 +697,9 @@ class WebDavUtil {
         }
       }
 
-      // 轮询模式不改服务器标记（只读）；完整同步才写回。
-      if (!pullOnly) {
+      // 轮询模式不改服务器标记（只读）；完整同步只在有变化时才写回。
+      if (!pullOnly &&
+          !flutter.mapEquals(serverFlag, updatedFlag)) {
         await _updateMetaSyncData(updatedFlag);
       }
       onComplete?.call();

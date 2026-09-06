@@ -62,16 +62,24 @@ class DiaryLogic extends GetxController with GetTickerProviderStateMixin {
   }
 
   Future<void> autoSync() async {
-    if (PrefUtil.getValue<bool>('autoSync') == true &&
-        await WebDavUtil().checkConnectivity()) {
-      final diary = await IsarUtil.getAllDiaries();
-      await WebDavUtil().syncDiary(diary, onDownload: () async {
-        await refreshAll();
-      });
-      // 画像 / 智能体任务 / 聊天记录等关键元数据体量小，随启动同步一次，
-      // 让两端尽快对齐（比日记快得多）。
-      await WebDavUtil().syncMetadata();
+    if (PrefUtil.getValue<bool>('autoSync') != true ||
+        !WebDavUtil().hasOption) {
+      return;
     }
+    if (!await WebDavUtil().checkConnectivity()) return;
+    final diary = await IsarUtil.getAllDiaries();
+    // 下载计数：大量下载时不再逐篇刷新 UI（原实现每下载一篇就整体刷新一次，
+    // 几十篇下载会反复重建列表），结束后统一刷新一次。
+    var downloaded = 0;
+    await WebDavUtil().syncDiary(diary, onDownload: () {
+      downloaded++;
+    });
+    if (downloaded > 0) {
+      await refreshAll();
+    }
+    // 画像 / 智能体任务 / 聊天记录等关键元数据体量小，随启动同步一次，
+    // 让两端尽快对齐（比日记快得多）。
+    await WebDavUtil().syncMetadata();
   }
 
   /// tab 监听函数

@@ -24,6 +24,7 @@ import 'package:moodiary/router/app_routes.dart';
 import 'package:moodiary/services/ai_trigger_service.dart';
 import 'package:moodiary/services/agent_brain/brain_service.dart';
 import 'package:moodiary/services/screen_time_service.dart';
+import 'package:moodiary/services/sync_keeper_service.dart';
 import 'package:moodiary/src/rust/frb_generated.dart';
 import 'package:moodiary/utils/file_util.dart';
 import 'package:moodiary/utils/log_util.dart';
@@ -100,6 +101,9 @@ Future<void> _initSystem() async {
   BrainService().init();
   // 启动屏幕使用时间服务（Android 采集 + 跨端同步）
   ScreenTimeService().init();
+  // 跨端轻量同步守护：WebDAV 已配置时自动周期拉/推元数据与日记，
+  // 让「打开另一端就能看到最新」不再依赖手动进页面。
+  SyncKeeperService().start();
   _step('services init');
 }
 

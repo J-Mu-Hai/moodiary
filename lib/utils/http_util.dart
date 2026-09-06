@@ -30,7 +30,7 @@ class HttpUtil {
 
   Dio get dio {
     if (_dio == null) {
-      _dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 5)));
+      _dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 12)));
       _dio?.interceptors.add(
         InterceptorsWrapper(
           onError: (error, handler) {
@@ -113,10 +113,17 @@ class HttpUtil {
     String path, {
     Map<String, dynamic>? header,
     Object? data,
+    Duration? receiveTimeout,
   }) async {
     final Response<ResponseBody> response = await dio.post(
       path,
-      options: Options(responseType: ResponseType.stream, headers: header),
+      options: Options(
+        responseType: ResponseType.stream,
+        headers: header,
+        // 允许调用方按场景覆盖读取超时（SSE 长连接需要足够的时间窗口）。
+        // 连接超时是实例级配置（BaseOptions，见 dio 初始化，12s）。
+        receiveTimeout: receiveTimeout,
+      ),
       data: data,
     );
 

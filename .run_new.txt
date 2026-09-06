@@ -1,0 +1,226 @@
+flutter: [STARTUP] 0ms: RustLib.init
+flutter: [PREF] Instance of 'Stopwatch' SharedPreferencesWithCache.create
+flutter: [PREF] Instance of 'Stopwatch' firstStart
+flutter: [PREF] Instance of 'Stopwatch' getPackageInfo
+flutter: [PREF] Instance of 'Stopwatch' merge
+flutter: [STARTUP] 12ms: PrefUtil.initPref
+flutter: [DefaultConfig] AI providers=provider_1783570755585:sk-06b9f…(35) | provider_default_deepseek:sk-06b9f…(35)
+flutter: [STARTUP] 0ms: DefaultConfig.seed
+flutter: [STARTUP] 3ms: IsarUtil.initIsar
+flutter: [STARTUP] 0ms: ensureFixedCategories
+flutter: [DB] files: default.isar=1.0MB, default.isar-lck=0.0MB
+package:media_kit_libs_windows_video registered.
+Problem getting monitor brightness
+flutter: [STARTUP] 83ms: ThemeUtil.buildTheme
+flutter: [STARTUP] 0ms: WebDavUtil.initWebDav
+flutter: [STARTUP] 1ms: _findLanguage
+flutter: [STARTUP] 0ms: _platFormOption
+flutter: [BrainService] 已初始化（分钟级轮询）
+flutter: [SyncKeeper] 跨端轻量同步已启动：60s 元数据 / 5min 全量+日记
+flutter: [STARTUP] 0ms: services init
+flutter: [TriggerService] 已初始化，5 个触发器
+flutter: [DIARY] loaded=30 cat=null in 7ms
+flutter: [DIARY] isFetching=false cat=null
+flutter: [BrainMonitor] 日记信息稳定（距上次写入 94 分钟，未读 0 篇）
+flutter: [FRAMES] 23.1 fps over 2s
+flutter: [AgentBrain] 信号 diary_stable → noop: 无未读日记，且已有等待中的互动任务（回应今日安排与询问今晚安排），深夜 23:31 不再额外打扰。
+flutter: [AgentBrain] 决策已记录: diary_stable noop=true tasks=0
+flutter: [SYNC] usage: local=601 server=1134
+flutter: [SYNC] usage done: downloaded=300 uploaded=0
+flutter: [FRAMES] 0.1 fps over 338s
+flutter: [FRAMES] 51.3 fps over 2s
+flutter: [FRAMES] 60.2 fps over 2s
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 0ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 1ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [DIARY] update loaded=30 cat=null in 1ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [FRAMES] 37.1 fps over 2s
+flutter: [FRAMES] 19.4 fps over 2s
+flutter: [DIARY] loaded=23 cat=019eaf97-ae4c-78c3-94d2-66708b610159 in 1ms
+flutter: [DIARY] isFetching=false cat=019eaf97-ae4c-78c3-94d2-66708b610159
+flutter: [FRAMES] 45.5 fps over 2s
+flutter: [FRAMES] 29.4 fps over 2s
+flutter: [DIARY] loaded=3 cat=019f7e1f-6c7b-7c93-ba1f-bc707d82d073 in 2ms
+flutter: [DIARY] isFetching=false cat=019f7e1f-6c7b-7c93-ba1f-bc707d82d073
+flutter: [FRAMES] 32.4 fps over 2s
+flutter: [FRAMES] 31.0 fps over 2s
+libpng warning: iCCP: known incorrect sRGB profile
+flutter: [FRAMES] 20.8 fps over 2s
+flutter: [FRAMES] 16.4 fps over 2s
+flutter: [DIARY] update loaded=4 cat=019f7e1f-6c7b-7c93-ba1f-bc707d82d073 in 6ms
+flutter: [DIARY] update isFetching=false cat=019f7e1f-6c7b-7c93-ba1f-bc707d82d073
+flutter: [DIARY] update loaded=30 cat=null in 9ms
+flutter: [DIARY] update isFetching=false cat=null
+flutter: [FRAMES] 33.6 fps over 2s
+flutter: [FRAMES] 13.9 fps over 2s
+flutter: [AgentBrain] 信号 diary_written → noop: 深夜23:37的'测试这个'是测试日记，非真实表达；已有晚间复盘与多次读取，此刻无需打扰。
+flutter: [AgentBrain] 决策已记录: diary_written noop=true tasks=0
+flutter: [BrainService] 日记写入已记录并触发 diary_written 信号
+flutter: [FRAMES] 1.9 fps over 11s
+flutter: [FRAMES] 0.0 fps over 10802s
+flutter: [BrainService] 任务「轻问一句今晚的安排」超时未回应，交大脑判定收尾
+flutter: [SyncKeeper] diary sync 失败: DioException [connection error]: The connection errored: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ (OS Error: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+, errno = 10057), address = 82.156.143.94, port = 28788
+flutter: [SYNC] usage: local=751 server=0
+flutter: [SYNC] usage done: downloaded=0 uploaded=0
+flutter: [AgentBrain] 收尾判定失败: DioException [connection error]: The connection errored: Failed host lookup: 'api.deepseek.com' This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: Failed host lookup: 'api.deepseek.com' (OS Error: 不知道这样的主机。
+, errno = 11001)
+flutter: [SyncKeeper] diary sync 失败: DioException [connection error]: The connection errored: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ (OS Error: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+, errno = 10057), address = 82.156.143.94, port = 52763
+flutter: [SYNC] usage: local=751 server=0
+flutter: [SYNC] usage done: downloaded=0 uploaded=0
+flutter: [TriggerService] AI 生成失败: DioException [connection error]: The connection errored: Failed host lookup: 'api.deepseek.com' This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: Failed host lookup: 'api.deepseek.com' (OS Error: 不知道这样的主机。
+, errno = 11001)
+flutter: [FRAMES] 0.0 fps over 33200s
+flutter: [FRAMES] 59.6 fps over 2s
+flutter: [MARQUEE] AdaptiveText overflow -> marquee textLen=10 w=0
+flutter: [MARQUEE] AdaptiveText overflow -> marquee textLen=15 w=0
+flutter: [MARQUEE] start text="Moodsonder" rounds=null
+flutter: [MARQUEE] start text="寂寞的时候，就呼唤我的名字吧。" rounds=null
+flutter: [FRAMES] 11.9 fps over 2s
+flutter: [FRAMES] 58.4 fps over 2s
+flutter: [FRAMES] 60.3 fps over 2s
+flutter: [FRAMES] 59.8 fps over 2s
+flutter: [FRAMES] 60.2 fps over 2s
+flutter: [FRAMES] 59.1 fps over 2s
+flutter: [FRAMES] 60.0 fps over 2s
+flutter: [FRAMES] 60.1 fps over 2s
+flutter: [FRAMES] 59.9 fps over 2s
+flutter: [SYNC] usage: local=751 server=1134
+flutter: [FRAMES] 58.9 fps over 2s
+flutter: [BrainMonitor] 天气变化 北京市北京|晴|24 → 北京市北京|晴|28
+flutter: [FRAMES] 58.7 fps over 2s
+flutter: [FRAMES] 60.6 fps over 2s
+flutter: [AgentBrain] 信号 weather_changed → noop: 天气从24升至28度，只是温和变化，无需打扰；且已有task正在执行轻量回应，避免重复打扰。
+flutter: [AgentBrain] 决策已记录: weather_changed noop=true tasks=0
+flutter: [FRAMES] 58.4 fps over 2s
+flutter: [FRAMES] 59.9 fps over 2s
+flutter: [FRAMES] 60.2 fps over 2s
+flutter: [SYNC] usage done: downloaded=300 uploaded=0
+flutter: [FRAMES] 59.1 fps over 2s
+flutter: [FRAMES] 59.5 fps over 2s
+flutter: [FRAMES] 59.5 fps over 2s
+flutter: [FRAMES] 58.7 fps over 2s
+flutter: [FRAMES] 60.6 fps over 2s
+flutter: [FRAMES] 59.1 fps over 2s
+flutter: [FRAMES] 59.8 fps over 2s
+flutter: [FRAMES] 59.6 fps over 2s
+flutter: [FRAMES] 59.2 fps over 2s
+flutter: [FRAMES] 60.4 fps over 2s
+flutter: [FRAMES] 59.2 fps over 2s
+flutter: [SYNC] usage: local=1051 server=1134
+flutter: [SYNC] usage done: downloaded=83 uploaded=51
+flutter: [Executor] 执行任务「询问中午计划」action=ask_user
+flutter: [Executor] 任务「询问中午计划」终态=waitingUser 反馈=[执行] 后台已发通知，等待用户回应
+flutter: [AgentBrain] 信号 noon_check_in → noop: 中午计划询问已由代码发起（waitingUser），且已有running的tts任务在回应安排，此刻再补充关怀会叠加打扰；用户情绪偏沉，宁可少打扰。
+flutter: [AgentBrain] 决策已记录: noon_check_in noop=true tasks=0
+flutter: [SYNC] usage: local=1134 server=1134
+flutter: [SYNC] usage done: downloaded=0 uploaded=18
+flutter: [SYNC] usage: local=1134 server=1134
+flutter: [SYNC] usage done: downloaded=0 uploaded=0
+flutter: [SYNC] usage: local=1134 server=0
+flutter: [SyncKeeper] diary sync 失败: DioException [connection error]: The connection errored: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ (OS Error: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+, errno = 10057), address = 82.156.143.94, port = 49784
+flutter: [SYNC] usage done: downloaded=0 uploaded=0
+flutter: [SyncKeeper] diary sync 失败: DioException [connection error]: The connection errored: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ (OS Error: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+, errno = 10057), address = 82.156.143.94, port = 45592
+flutter: [SYNC] usage: local=1134 server=0
+flutter: [SYNC] usage done: downloaded=0 uploaded=0
+flutter: [SyncKeeper] diary sync 失败: DioException [connection timeout]: The request connection took longer than 0:00:10.000000 and it was aborted. To get rid of this exception, try raising the RequestOptions.connectTimeout above the duration of 0:00:10.000000 or improve the response time of the server.
+flutter: [SYNC] usage: local=1134 server=0
+flutter: [SyncKeeper] diary sync 失败: DioException [connection timeout]: The request connection took longer than 0:00:10.000000 and it was aborted. To get rid of this exception, try raising the RequestOptions.connectTimeout above the duration of 0:00:10.000000 or improve the response time of the server.
+flutter: [SyncKeeper] diary sync 失败: DioException [connection error]: The connection errored: 信号灯超时时间已到
+ This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: 信号灯超时时间已到
+ (OS Error: 信号灯超时时间已到
+, errno = 121), address = 82.156.143.94, port = 51490
+flutter: [SyncKeeper] diary sync 失败: DioException [connection error]: The connection errored: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ (OS Error: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+, errno = 10057), address = 82.156.143.94, port = 53066
+flutter: [TriggerService] AI 生成失败: DioException [unknown]: null
+Error: HandshakeException: Handshake error in client (OS Error: 
+	CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate(../../../flutter/third_party/boringssl/src/ssl/handshake.cc:391))
+flutter: [BrainService] 任务「询问中午计划」超时未回应，交大脑判定收尾
+flutter: [Executor] 执行任务「询问明天计划」action=ask_user
+flutter: [Executor] 任务「询问明天计划」终态=waitingUser 反馈=[执行] 后台已发通知，等待用户回应
+flutter: [SyncKeeper] diary sync 失败: DioException [connection error]: The connection errored: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+ (OS Error: 由于套接字没有连接并且(当使用一个 sendto 调用发送数据报套接字时)没有提供地址，发送或接收数据的请求没有被接受。
+, errno = 10057), address = 82.156.143.94, port = 3290
+flutter: [TriggerService] AI 生成失败: DioException [connection error]: The connection errored: Failed host lookup: 'api.deepseek.com' This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: Failed host lookup: 'api.deepseek.com' (OS Error: 不知道这样的主机。
+, errno = 11001)
+flutter: [AgentBrain] 收尾判定失败: DioException [connection error]: The connection errored: Failed host lookup: 'api.deepseek.com' This indicates an error which most likely cannot be solved by the library.
+Error: SocketException: Failed host lookup: 'api.deepseek.com' (OS Error: 不知道这样的主机。
+, errno = 11001)
+flutter: [SYNC] usage done: downloaded=0 uploaded=0
+flutter: [AgentBrain] AI 决策失败 https://api.deepseek.com key=sk-06b9f…(35) HTTP null null: DioException [unknown]: null
+Error: HandshakeException: Handshake error in client (OS Error: 
+	CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate(../../../flutter/third_party/boringssl/src/ssl/handshake.cc:391))
+flutter: [TriggerService] AI 生成失败: DioException [unknown]: null
+Error: HandshakeException: Handshake error in client (OS Error: 
+	CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate(../../../flutter/third_party/boringssl/src/ssl/handshake.cc:391))
+flutter: [TriggerService] AI 生成失败: DioException [unknown]: null
+Error: HandshakeException: Handshake error in client (OS Error: 
+	CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate(../../../flutter/third_party/boringssl/src/ssl/handshake.cc:391))
+flutter: [SyncKeeper] diary sync 失败: DioException [connection timeout]: The request connection took longer than 0:00:10.000000 and it was aborted. To get rid of this exception, try raising the RequestOptions.connectTimeout above the duration of 0:00:10.000000 or improve the response time of the server.
+flutter: [SYNC] usage: local=1134 server=0
+flutter: [FRAMES] 0.0 fps over 32709s
+flutter: [FRAMES] 41.9 fps over 2s
+flutter: [FRAMES] 15.9 fps over 3s
+flutter: [FRAMES] 7.7 fps over 2s
+flutter: [SyncKeeper] diary sync 失败: DioException [connection timeout]: The request connection took longer than 0:00:10.000000 and it was aborted. To get rid of this exception, try raising the RequestOptions.connectTimeout above the duration of 0:00:10.000000 or improve the response time of the server.
+flutter: [FRAMES] 1.5 fps over 6s
+flutter: [FRAMES] 7.5 fps over 3s
+flutter: [FRAMES] 2.9 fps over 2s
+flutter: [TriggerService] AI 生成失败: DioException [unknown]: null
+Error: HandshakeException: Handshake error in client (OS Error: 
+	CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate(../../../flutter/third_party/boringssl/src/ssl/handshake.cc:391))
+flutter: [FRAMES] 4.5 fps over 2s
+flutter: [SyncKeeper] diary sync 失败: DioException [connection timeout]: The request connection took longer than 0:00:10.000000 and it was aborted. To get rid of this exception, try raising the RequestOptions.connectTimeout above the duration of 0:00:10.000000 or improve the response time of the server.
+flutter: [FRAMES] 10.1 fps over 3s
+flutter: [FRAMES] 4.2 fps over 2s
+flutter: [FRAMES] 0.0 fps over 47s

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:moodiary/common/values/webdav.dart';
 import 'package:moodiary/presentation/pref.dart';
 import 'package:moodiary/presentation/secure_storage.dart';
+import 'package:moodiary/services/sync_keeper_service.dart';
 import 'package:moodiary/utils/notice_util.dart';
 import 'package:moodiary/utils/webdav_util.dart';
 import 'package:refreshed/refreshed.dart';
@@ -77,6 +78,14 @@ class WebDavLogic extends GetxController {
       if (state.connectivityStatus.value ==
           WebDavConnectivityStatus.connected) {
         await webDav.initDir();
+        // 配置成功即开启自动同步（启动同步 + 改动后同步），并启动跨端轻量
+        // 同步守护；用户之后仍可在本页手动关闭。
+        if (!(PrefUtil.getValue<bool>('autoSyncSeeded') ?? false)) {
+          await PrefUtil.setValue<bool>('autoSync', true);
+          await PrefUtil.setValue<bool>('autoSyncAfterChange', true);
+          await PrefUtil.setValue<bool>('autoSyncSeeded', true);
+        }
+        SyncKeeperService().start();
         NoticeUtil.showToast('保存成功');
       } else {
         NoticeUtil.showToast('保存失败，请检查配置');
@@ -101,6 +110,7 @@ class WebDavLogic extends GetxController {
       passwordController.text = '';
       state.hasOption.value = false;
       webDav.removeWebDavOption();
+      SyncKeeperService().stop();
       NoticeUtil.showToast('删除成功');
     } else {
       // 超过3秒，重置点击时间并提示

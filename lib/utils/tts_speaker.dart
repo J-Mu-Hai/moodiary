@@ -28,6 +28,9 @@ class TtsSpeaker {
   static String lastError = '';
 
   /// 合成并播放指定文本。成功返回 true，失败返回 false（不抛出）。
+  ///
+  /// 网络层抖动（连接失败/SSE 中断/超时）自动重试 1 次；业务错误
+  /// （key/音色/配额等服务端返回错误码）不重试，直接上报。
   static Future<bool> speak(String text) async {
     lastError = '';
     if (DefaultConfig.doubaoTtsKey.isEmpty || text.trim().isEmpty) {
@@ -45,6 +48,31 @@ class TtsSpeaker {
       },
     };
 
+    for (var attempt = 1; attempt <= 2; attempt++) {
+      final res = await _synthesizeOnce(body);
+      if (res.audio != null) {
+        try {
+          final tmpPath = FileUtil.getCachePath('tts_${_genReqId()}.mp3');
+          await File(tmpPath).writeAsBytes(res.audio!);
+          await _player.play(DeviceFileSource(tmpPath));
+          return true;
+        } catch (e) {
+          lastError = '播放失败: $e';
+          LogUtil.printInfo('[TTS] 播放失败: $e');
+          return false;
+        }
+      }
+      lastError = res.error ?? '未知错误';
+      LogUtil.printInfo('[TTS] 合成失败(第$attempt 次): $lastError');
+      if (!res.retryable || attempt == 2) return false;
+      // 网络抖动：稍候重试一次
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+    }
+    return false;
+  }
+
+  /// 单次合成：成功返回音频字节；失败返回错误原因（网络层错误带 [retryable]）。
+  static Future<_TtsResult> _synthesizeOnce(Map<String, dynamic> body) async {
     try {
       final lines = await HttpUtil().postStream(
         'https://openspeech.bytedance.com/api/v3/tts/unidirectional/sse',
@@ -55,10 +83,11 @@ class TtsSpeaker {
           'X-Api-Request-Id': _genReqId(),
         },
         data: body,
+        // SSE 读取超时放宽（连接超时是 dio 实例级 12s，见 HttpUtil）
+        receiveTimeout: const Duration(seconds: 90),
       );
       if (lines == null) {
-        lastError = 'TTS 连接失败';
-        return false;
+        return const _TtsResult(null, 'TTS 连接失败', true);
       }
 
       // 逐行解析 SSE：收集所有 code==0 的音频分片，遇到结束事件退出
@@ -81,27 +110,19 @@ class TtsSpeaker {
         } else if (code == 20000000) {
           break; // 合成结束
         } else {
-          lastError = '合成失败 code=$code msg=${evt['message']}';
-          LogUtil.printInfo('[TTS] 合成失败 code=$code msg=${evt['message']}');
-          return false;
+          // 服务端业务错误（如 key 无效/音色不匹配）：不重试
+          return _TtsResult(null, '合成失败 code=$code msg=${evt['message']}',
+              false);
         }
       }
 
       if (chunks.isEmpty) {
-        lastError = '未收到音频数据';
-        LogUtil.printInfo('[TTS] 未收到音频数据');
-        return false;
+        return const _TtsResult(null, '未收到音频数据', false);
       }
-
-      final audioBytes = base64Decode(chunks.join());
-      final tmpPath = FileUtil.getCachePath('tts_${_genReqId()}.mp3');
-      await File(tmpPath).writeAsBytes(audioBytes);
-      await _player.play(DeviceFileSource(tmpPath));
-      return true;
+      return _TtsResult(base64Decode(chunks.join()), null, false);
     } catch (e) {
-      lastError = '错误: $e';
-      LogUtil.printInfo('[TTS] 错误: $e');
-      return false;
+      // 连接/读取中断：可重试
+      return _TtsResult(null, '错误: $e', true);
     }
   }
 
@@ -115,4 +136,15 @@ class TtsSpeaker {
         '${'89ab'[rnd.nextInt(4)]}${h.substring(17, 20)}-'
         '${h.substring(20)}';
   }
+}
+
+/// 一次合成结果。
+/// [audio] 非空 = 成功；否则 [error] 为失败原因，[retryable] 标记网络层错误
+/// （连接失败/中断）以便重试，业务错误不重试。
+class _TtsResult {
+  final List<int>? audio;
+  final String? error;
+  final bool retryable;
+
+  const _TtsResult(this.audio, this.error, this.retryable);
 }
